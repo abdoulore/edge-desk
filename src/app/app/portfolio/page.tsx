@@ -27,15 +27,6 @@ export default function PortfolioPage() {
     downBalance: string;
   } | null>(null);
 
-  if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading portfolio…" />;
-  }
-  if (error && !status) {
-    return (
-      <StateBlock kind="error" title="Portfolio unavailable" detail={error} />
-    );
-  }
-
   const claimable = status?.claimable ?? [];
   const lastTrade = status?.signal?.lastTrade;
   const signal = status?.signal;
@@ -55,6 +46,15 @@ export default function PortfolioPage() {
       cancelled = true;
     };
   }, [address, isConnected, signal?.marketId, status?.lastTickAt]);
+
+  if (loading && !status) {
+    return <StateBlock kind="loading" title="Loading portfolio…" />;
+  }
+  if (error && !status) {
+    return (
+      <StateBlock kind="error" title="Portfolio unavailable" detail={error} />
+    );
+  }
 
   async function onClaim(id: string) {
     const res = await claimMarket(id);
