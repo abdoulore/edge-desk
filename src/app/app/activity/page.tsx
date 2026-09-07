@@ -1,7 +1,8 @@
 "use client";
 
+import { ArrowsClockwise } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
-import { Badge, Panel, StateBlock } from "@/components/ui";
+import { Badge, Panel, StateBlock, PageHeader } from "@/components/ui";
 import { fmtDateTime, fmtPct, shortHash } from "@/lib/format";
 import { explorerTxUrl, type ActivityEvent } from "@/lib/types";
 
@@ -23,7 +24,7 @@ export default function ActivityPage() {
   const { status, loading, error, refresh } = useDeskStatus({ pollMs: 8000 });
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading activity…" />;
+    return <StateBlock kind="loading" title="Loading activity..." />;
   }
   if (error && !status) {
     return (
@@ -34,7 +35,6 @@ export default function ActivityPage() {
   const activity = status?.activity ?? [];
   const lastTrade = status?.signal?.lastTrade;
 
-  // Ensure last trade shows even if ring buffer empty (pre-upgrade)
   const rows: ActivityEvent[] =
     activity.length > 0
       ? activity
@@ -57,23 +57,20 @@ export default function ActivityPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-desk-muted">
-            Activity
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Recent ticks & fills
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="rounded-lg border border-desk-border px-3 py-1.5 text-xs text-desk-muted hover:text-white"
-        >
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        kicker="Activity"
+        title="Recent ticks and fills"
+        action={
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="inline-flex items-center gap-1.5 rounded-desk-sm border border-desk-border px-3 py-1.5 text-xs text-desk-muted transition hover:text-desk-ink"
+          >
+            <ArrowsClockwise size={13} />
+            Refresh
+          </button>
+        }
+      />
 
       {rows.length === 0 ? (
         <StateBlock
@@ -86,7 +83,7 @@ export default function ActivityPage() {
           <ol className="divide-y divide-desk-border">
             {rows.map((ev) => (
               <li key={ev.id} className="flex gap-3 px-4 py-3.5">
-                <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-desk-cyan/80" />
+                <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-desk-accent/80" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{ev.title}</span>
@@ -97,13 +94,13 @@ export default function ActivityPage() {
                       </Badge>
                     )}
                     {ev.edge != null && (
-                      <span className="font-mono text-[11px] text-desk-muted">
+                      <span className="font-mono text-[11px] text-desk-muted tabular">
                         {fmtPct(ev.edge)}
                       </span>
                     )}
                   </div>
                   {ev.detail && (
-                    <p className="mt-1 text-sm leading-relaxed text-desk-muted line-clamp-3">
+                    <p className="mt-1 line-clamp-3 text-sm leading-relaxed text-desk-muted">
                       {ev.detail}
                     </p>
                   )}
@@ -115,9 +112,9 @@ export default function ActivityPage() {
                         href={explorerTxUrl(ev.txHash)}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-mono text-desk-cyan hover:underline"
+                        className="font-mono text-desk-accent hover:underline"
                       >
-                        {shortHash(ev.txHash)} ↗
+                        {shortHash(ev.txHash)}
                       </a>
                     )}
                   </div>

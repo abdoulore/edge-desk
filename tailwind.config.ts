@@ -10,33 +10,56 @@ const config: Config = {
     extend: {
       colors: {
         desk: {
-          bg: "#0b0f14",
-          panel: "#121821",
-          border: "#1e2a3a",
-          accent: "#3dd68c",
-          cyan: "#3ecfff",
-          warn: "#f5a524",
-          down: "#f04438",
-          muted: "#8b9bb4",
+          bg: "#0a0e13",
+          panel: "#111820",
+          elevated: "#161e2a",
+          border: "#1c2736",
+          accent: "#34c77b",
+          "accent-dim": "#1a3d2e",
+          warn: "#d4a017",
+          down: "#e0544a",
+          muted: "#7d8fa8",
+          ink: "#e6edf5",
         },
       },
       fontFamily: {
         sans: [
-          "var(--font-geist)",
+          "var(--font-outfit)",
           "ui-sans-serif",
           "system-ui",
           "-apple-system",
-          "Segoe UI",
-          "Roboto",
           "sans-serif",
         ],
         mono: [
-          "var(--font-geist-mono)",
+          "var(--font-jb-mono)",
           "ui-monospace",
           "SFMono-Regular",
           "Menlo",
           "monospace",
         ],
+      },
+      borderRadius: {
+        desk: "12px",
+        "desk-sm": "8px",
+        "desk-lg": "16px",
+      },
+      boxShadow: {
+        desk: "0 12px 40px rgba(0, 0, 0, 0.35)",
+        "desk-accent": "0 8px 28px rgba(52, 199, 123, 0.18)",
+      },
+      keyframes: {
+        "skeleton-shimmer": {
+          "0%": { backgroundPosition: "200% 0" },
+          "100%": { backgroundPosition: "-200% 0" },
+        },
+        "fade-up": {
+          "0%": { opacity: "0", transform: "translateY(12px)" },
+          "100%": { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        shimmer: "skeleton-shimmer 1.6s ease-in-out infinite",
+        "fade-up": "fade-up 0.55s cubic-bezier(0.16, 1, 0.3, 1) both",
       },
     },
   },

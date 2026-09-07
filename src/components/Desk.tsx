@@ -3,9 +3,14 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import {
+  ArrowSquareOut,
+  Lightning,
+  Warning,
+} from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import { useWalletTrade } from "@/hooks/useWalletTrade";
-import { Badge, Metric, Panel, StateBlock, Toast } from "@/components/ui";
+import { Badge, Metric, Panel, StateBlock, Toast, PageHeader, Btn } from "@/components/ui";
 import {
   fmtCountdown,
   fmtInterval,
@@ -75,71 +80,69 @@ export default function Desk() {
   }
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Connecting to desk…" detail="Fetching /api/status" />;
-  }
-
-  if (error && !status) {
     return (
       <StateBlock
-        kind="error"
-        title="Desk offline"
-        detail={error}
+        kind="loading"
+        title="Connecting to desk..."
+        detail="Fetching /api/status"
       />
     );
   }
 
+  if (error && !status) {
+    return <StateBlock kind="error" title="Desk offline" detail={error} />;
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-desk-muted">
-            Trading desk
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            {signal?.asset || "—"} · {fmtInterval(signal?.intervalSec)} window
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => void tick()}
-          disabled={actionBusy}
-          className="rounded-lg border border-desk-border bg-desk-panel px-3 py-1.5 text-xs text-desk-muted transition hover:text-white disabled:opacity-50"
-        >
-          {busy === "tick" ? "Ticking…" : "Force signal"}
-        </button>
-      </div>
+      <PageHeader
+        kicker="Trading desk"
+        title={`${signal?.asset || "-"} · ${fmtInterval(signal?.intervalSec)} window`}
+        action={
+          <button
+            type="button"
+            onClick={() => void tick()}
+            disabled={actionBusy}
+            className="inline-flex items-center gap-1.5 rounded-desk-sm border border-desk-border bg-desk-panel px-3 py-1.5 text-xs text-desk-muted transition hover:text-desk-ink disabled:opacity-50"
+          >
+            <Lightning size={13} weight="fill" />
+            {busy === "tick" ? "Ticking..." : "Force signal"}
+          </button>
+        }
+      />
 
       {status?.paused && (
-        <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
-          Agent paused. Resume in Settings.
-        </p>
+        <Alert tone="warn">Agent paused. Resume in Settings.</Alert>
       )}
 
       {status?.agentStalled && !status?.paused && (
-        <p className="rounded-xl border border-desk-down/30 bg-desk-down/5 px-3 py-2 text-xs text-desk-down">
-          Agent not running (stale lastTickAt).
-        </p>
+        <Alert tone="down">Agent not running (stale lastTickAt).</Alert>
       )}
 
       {(status?.preferredMissing || signal?.preferredMissing) && (
-        <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
+        <Alert tone="warn">
           Preferred window missing - showing {fmtInterval(signal?.intervalSec)}.
-        </p>
+        </Alert>
       )}
 
-      {focusMarket && signal?.marketId && focusMarket.toLowerCase() !== signal.marketId.toLowerCase() && (
-        <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
-          Focus requested {focusMarket.slice(0, 12)}… — waiting for agent to adopt.
-        </p>
-      )}
+      {focusMarket &&
+        signal?.marketId &&
+        focusMarket.toLowerCase() !== signal.marketId.toLowerCase() && (
+          <Alert tone="warn">
+            Focus requested {focusMarket.slice(0, 12)}... - waiting for agent to
+            adopt.
+          </Alert>
+        )}
 
       <Panel>
         <div className="mb-3 flex items-center justify-between text-sm text-desk-muted">
-          <span className="font-mono text-xs">
-            {signal?.marketId ? `${signal.marketId.slice(0, 14)}…` : "No market"}
+          <span className="font-mono text-xs tabular">
+            {signal?.marketId
+              ? `${signal.marketId.slice(0, 14)}...`
+              : "No market"}
           </span>
-          <span className="font-mono tabular-nums" suppressHydrationWarning>
-            {signal?.expiry ? fmtCountdown(signal.expiry, now) : "—"} left
+          <span className="font-mono text-xs tabular" suppressHydrationWarning>
+            {signal?.expiry ? fmtCountdown(signal.expiry, now) : "-"} left
           </span>
         </div>
 
@@ -149,7 +152,7 @@ export default function Desk() {
             label="Edge"
             value={
               signal?.edge == null
-                ? "—"
+                ? "-"
                 : `${signal.edge >= 0 ? "+" : ""}${fmtPct(signal.edge)}`
             }
             className={edgeColor}
@@ -166,17 +169,15 @@ export default function Desk() {
           <Metric label="Reference" value={fmtNum(signal?.reference, 2)} />
         </div>
 
-        <div className="mt-4 rounded-xl border border-desk-cyan/20 bg-gradient-to-br from-desk-cyan/5 to-transparent px-4 py-4">
-          <p className="mb-1.5 text-[11px] uppercase tracking-wider text-desk-cyan">
-            Why
-          </p>
-          <p className="text-[15px] leading-relaxed text-zinc-100">
-            {signal?.reason || "Waiting for first agent tick…"}
+        <div className="mt-4 rounded-desk border border-desk-accent/20 bg-gradient-to-br from-desk-accent/5 to-transparent px-4 py-4">
+          <p className="mb-1.5 text-[11px] font-medium text-desk-accent">Why</p>
+          <p className="text-[15px] leading-relaxed text-desk-ink">
+            {signal?.reason || "Waiting for first agent tick..."}
           </p>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Badge>{signal?.status || "—"}</Badge>
+          <Badge>{signal?.status || "-"}</Badge>
           {signal?.recommendedSide && (
             <Badge tone={signal.recommendedSide === "Up" ? "up" : "down"}>
               Signal {signal.recommendedSide}
@@ -206,13 +207,15 @@ export default function Desk() {
                 >
                   {signal.lastTrade.side}
                 </span>{" "}
-                · size {signal.lastTrade.size} @ {fmtNum(signal.lastTrade.price, 3)}
+                · size {signal.lastTrade.size} @{" "}
+                {fmtNum(signal.lastTrade.price, 3)}
               </p>
               <p className="mt-1 text-sm text-desk-muted">
-                Edge {fmtPct(signal.lastTrade.edge)} · {fmtTime(signal.lastTrade.at)}
+                Edge {fmtPct(signal.lastTrade.edge)} ·{" "}
+                {fmtTime(signal.lastTrade.at)}
                 {signal.lastTrade.dryRun ? " · dry-run" : ""}
               </p>
-              <p className="mt-2 text-sm leading-relaxed text-zinc-300">
+              <p className="mt-2 text-sm leading-relaxed text-desk-ink/85">
                 {signal.lastTrade.reason}
               </p>
             </div>
@@ -221,9 +224,10 @@ export default function Desk() {
                 href={explorerTxUrl(signal.lastTrade.txHash)}
                 target="_blank"
                 rel="noreferrer"
-                className="shrink-0 rounded-lg border border-desk-cyan/30 bg-desk-cyan/5 px-3 py-2 font-mono text-xs text-desk-cyan hover:underline"
+                className="inline-flex shrink-0 items-center gap-1 rounded-desk-sm border border-desk-accent/30 bg-desk-accent/5 px-3 py-2 font-mono text-xs text-desk-accent hover:underline"
               >
-                Tx {shortHash(signal.lastTrade.txHash)} ↗
+                Tx {shortHash(signal.lastTrade.txHash)}
+                <ArrowSquareOut size={12} />
               </a>
             )}
           </div>
@@ -231,23 +235,22 @@ export default function Desk() {
       )}
 
       <section className="grid grid-cols-2 gap-3">
-        <button
-          type="button"
+        <Btn
           onClick={() => void onCopy()}
           disabled={actionBusy || !isConnected}
-          className="rounded-2xl bg-desk-accent px-4 py-3.5 text-sm font-semibold text-black transition active:scale-[0.98] disabled:opacity-50"
+          className="w-full py-3.5"
         >
           {tradeBusy === "copy"
             ? "Copying..."
             : isConnected
               ? "Copy last trade"
               : "Connect to copy"}
-        </button>
-        <button
-          type="button"
+        </Btn>
+        <Btn
+          variant="secondary"
           onClick={() => void onClaim()}
           disabled={actionBusy || !isConnected || !hasClaimable}
-          className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3.5 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+          className="w-full py-3.5"
         >
           {tradeBusy === "claim"
             ? "Claiming..."
@@ -256,7 +259,7 @@ export default function Desk() {
               : isConnected
                 ? "Claim"
                 : "Connect to claim"}
-        </button>
+        </Btn>
       </section>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -265,16 +268,17 @@ export default function Desk() {
             href={signal.oracleGraphUrl}
             target="_blank"
             rel="noreferrer"
-            className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-cyan transition hover:border-desk-cyan/40"
+            className="inline-flex items-center justify-center gap-1.5 rounded-desk-lg border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-accent transition hover:border-desk-accent/40"
           >
-            Oracle resolution graph ↗
+            Oracle resolution graph
+            <ArrowSquareOut size={14} />
           </a>
         )}
         <Link
           href="/app/markets"
-          className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-muted transition hover:text-white"
+          className="rounded-desk-lg border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-muted transition hover:text-desk-ink"
         >
-          Browse markets →
+          Browse markets
         </Link>
       </div>
 
@@ -290,13 +294,13 @@ export default function Desk() {
                   <p>
                     {c.asset} · {c.status}
                   </p>
-                  <p className="font-mono text-xs text-desk-muted">
-                    {c.marketId.slice(0, 10)}…
+                  <p className="font-mono text-xs text-desk-muted tabular">
+                    {c.marketId.slice(0, 10)}...
                   </p>
                 </div>
                 <button
                   type="button"
-                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs disabled:opacity-50"
+                  className="rounded-desk-sm bg-white/10 px-3 py-1.5 text-xs transition hover:bg-white/15 disabled:opacity-50"
                   disabled={actionBusy || !isConnected}
                   onClick={() => void onClaim(c.marketId)}
                 >
@@ -310,12 +314,21 @@ export default function Desk() {
 
       <footer className="space-y-1 pt-1 text-center text-[11px] text-desk-muted">
         <p>
-          Threshold {fmtPct(signal?.edgeThreshold ?? status?.config?.edgeThreshold ?? 0.05, 0)} · size{" "}
-          {signal?.copySize ?? status?.config?.copySize ?? 1} ·{" "}
-          {status?.agentStalled ? "stalled" : status?.paused ? "paused" : "signal-only"}
+          Threshold{" "}
+          {fmtPct(
+            signal?.edgeThreshold ?? status?.config?.edgeThreshold ?? 0.05,
+            0,
+          )}{" "}
+          · size {signal?.copySize ?? status?.config?.copySize ?? 1} ·{" "}
+          {status?.agentStalled
+            ? "stalled"
+            : status?.paused
+              ? "paused"
+              : "signal-only"}
         </p>
         <p suppressHydrationWarning>
-          Updated {fmtTime(signal?.updatedAt)} · {new Date(now).toLocaleTimeString()}
+          Updated {fmtTime(signal?.updatedAt)} ·{" "}
+          {new Date(now).toLocaleTimeString()}
         </p>
         {signal?.error && <p className="text-desk-down">{signal.error}</p>}
         {error && <p className="text-desk-warn">{error}</p>}
@@ -323,5 +336,26 @@ export default function Desk() {
 
       {toast && <Toast message={toast} />}
     </div>
+  );
+}
+
+function Alert({
+  children,
+  tone,
+}: {
+  children: React.ReactNode;
+  tone: "warn" | "down";
+}) {
+  const cls =
+    tone === "warn"
+      ? "border-desk-warn/30 bg-desk-warn/5 text-desk-warn"
+      : "border-desk-down/30 bg-desk-down/5 text-desk-down";
+  return (
+    <p
+      className={`flex items-start gap-2 rounded-desk border px-3 py-2 text-xs ${cls}`}
+    >
+      <Warning size={14} className="mt-0.5 shrink-0" weight="fill" />
+      <span>{children}</span>
+    </p>
   );
 }

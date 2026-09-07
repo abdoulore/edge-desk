@@ -7,6 +7,7 @@ import {
   useDisconnect,
   useSwitchChain,
 } from "wagmi";
+import { Wallet, ArrowsLeftRight } from "@phosphor-icons/react";
 import { shortAddr } from "@/lib/format";
 import { SHANNON_CHAIN_ID } from "./config";
 
@@ -21,8 +22,8 @@ export default function ConnectButton() {
 
   if (!mounted) {
     return (
-      <span className="rounded-lg border border-desk-border px-2.5 py-1 font-mono text-[11px] text-desk-muted">
-        …
+      <span className="inline-flex h-8 items-center rounded-desk-sm border border-desk-border px-2.5 font-mono text-[11px] text-desk-muted">
+        ...
       </span>
     );
   }
@@ -34,10 +35,11 @@ export default function ConnectButton() {
         type="button"
         disabled={!connector || isPending}
         onClick={() => connector && connect({ connector })}
-        className="rounded-lg border border-desk-accent/40 bg-desk-accent/10 px-2.5 py-1 text-[11px] font-medium text-desk-accent transition hover:bg-desk-accent/20 disabled:opacity-50"
+        className="inline-flex h-8 items-center gap-1.5 rounded-desk-sm border border-desk-accent/40 bg-desk-accent/10 px-2.5 text-[11px] font-medium text-desk-accent transition hover:bg-desk-accent/20 active:scale-[0.98] disabled:opacity-50"
         title={error?.message}
       >
-        {isPending ? "Connecting…" : "Connect wallet"}
+        <Wallet size={13} weight="bold" />
+        {isPending ? "Connecting..." : "Connect"}
       </button>
     );
   }
@@ -51,15 +53,16 @@ export default function ConnectButton() {
           type="button"
           disabled={switching}
           onClick={() => switchChain({ chainId: SHANNON_CHAIN_ID })}
-          className="rounded-lg border border-desk-warn/40 px-2 py-1 text-[11px] text-desk-warn"
+          className="inline-flex h-8 items-center gap-1 rounded-desk-sm border border-desk-warn/40 px-2 text-[11px] text-desk-warn"
         >
-          {switching ? "Switching…" : "Switch to Shannon"}
+          <ArrowsLeftRight size={12} />
+          {switching ? "Switching..." : "Shannon"}
         </button>
       )}
       <button
         type="button"
         onClick={() => disconnect()}
-        className="rounded-lg border border-desk-border bg-black/30 px-2.5 py-1 font-mono text-[11px] text-zinc-200 hover:border-desk-cyan/40"
+        className="inline-flex h-8 items-center rounded-desk-sm border border-desk-border bg-black/30 px-2.5 font-mono text-[11px] text-desk-ink tabular hover:border-desk-accent/40"
         title="Disconnect"
       >
         {shortAddr(address)}

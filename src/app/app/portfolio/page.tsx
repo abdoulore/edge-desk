@@ -2,9 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { useAccount } from "wagmi";
+import { ArrowSquareOut } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import { useWalletTrade } from "@/hooks/useWalletTrade";
-import { Badge, Panel, StateBlock, Toast } from "@/components/ui";
+import {
+  Badge,
+  Panel,
+  StateBlock,
+  Toast,
+  PageHeader,
+} from "@/components/ui";
 import {
   fmtDateTime,
   fmtInterval,
@@ -48,7 +55,7 @@ export default function PortfolioPage() {
   }, [address, isConnected, signal?.marketId, status?.lastTickAt]);
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading portfolio…" />;
+    return <StateBlock kind="loading" title="Loading portfolio..." />;
   }
   if (error && !status) {
     return (
@@ -65,17 +72,10 @@ export default function PortfolioPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-      <div>
-        <p className="text-[11px] uppercase tracking-[0.2em] text-desk-muted">
-          Portfolio
-        </p>
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Positions & claims
-        </h1>
-      </div>
+      <PageHeader kicker="Portfolio" title="Positions and claims" />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <MiniStat label="Focused" value={signal?.asset || "—"} />
+        <MiniStat label="Focused" value={signal?.asset || "-"} />
         <MiniStat
           label="Claimable"
           value={String(claimable.length)}
@@ -83,7 +83,7 @@ export default function PortfolioPage() {
         />
         <MiniStat
           label="Last side"
-          value={lastTrade?.side || "—"}
+          value={lastTrade?.side || "-"}
           tone={
             lastTrade?.side === "Up"
               ? "text-desk-accent"
@@ -101,14 +101,14 @@ export default function PortfolioPage() {
               <span className="text-desk-muted">Market · </span>
               {signal.asset} {fmtInterval(signal.intervalSec)} · {signal.status}
             </p>
-            <p className="font-mono text-xs text-desk-muted break-all">
+            <p className="break-all font-mono text-xs text-desk-muted">
               {signal.marketId}
             </p>
             <p>
               <span className="text-desk-muted">Edge · </span>
-              <span className="font-mono">
+              <span className="font-mono tabular">
                 {signal.edge == null
-                  ? "—"
+                  ? "-"
                   : `${signal.edge >= 0 ? "+" : ""}${fmtPct(signal.edge)}`}
               </span>
               {signal.recommendedSide && (
@@ -123,12 +123,15 @@ export default function PortfolioPage() {
               )}
             </p>
             {isConnected && balances && (
-              <p className="mt-2 font-mono text-xs text-desk-cyan">
-                Your outcomes · Up {balances.upBalance} · Down {balances.downBalance}
+              <p className="mt-2 font-mono text-xs text-desk-accent tabular">
+                Your outcomes · Up {balances.upBalance} · Down{" "}
+                {balances.downBalance}
               </p>
             )}
             {isConnected && !balances && (
-              <p className="mt-2 text-xs text-desk-muted">Reading outcome balances…</p>
+              <p className="mt-2 text-xs text-desk-muted">
+                Reading outcome balances...
+              </p>
             )}
             {!isConnected && (
               <p className="mt-2 text-xs text-desk-muted">
@@ -153,13 +156,13 @@ export default function PortfolioPage() {
             {claimable.map((c) => (
               <li
                 key={c.marketId}
-                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-desk-border/70 bg-black/20 px-3 py-3"
+                className="flex flex-wrap items-center justify-between gap-3 rounded-desk border border-desk-border/70 bg-black/20 px-3 py-3"
               >
                 <div>
                   <p className="font-medium">
                     {c.asset} · {c.status}
                   </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-desk-muted">
+                  <p className="mt-0.5 font-mono text-[11px] text-desk-muted tabular">
                     Up {c.upBalance} · Down {c.downBalance}
                   </p>
                   {c.oracleGraphUrl && (
@@ -167,9 +170,10 @@ export default function PortfolioPage() {
                       href={c.oracleGraphUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="mt-1 inline-block text-xs text-desk-cyan hover:underline"
+                      className="mt-1 inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
                     >
-                      Oracle graph ↗
+                      Oracle graph
+                      <ArrowSquareOut size={11} />
                     </a>
                   )}
                 </div>
@@ -177,9 +181,9 @@ export default function PortfolioPage() {
                   type="button"
                   disabled={busy !== null || !isConnected}
                   onClick={() => void onClaim(c.marketId)}
-                  className="rounded-lg bg-desk-accent px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
+                  className="rounded-desk-sm bg-desk-accent px-3 py-1.5 text-xs font-semibold text-black transition active:scale-[0.98] disabled:opacity-50"
                 >
-                  {busy === "claim" ? "…" : isConnected ? "Claim" : "Connect"}
+                  {busy === "claim" ? "..." : isConnected ? "Claim" : "Connect"}
                 </button>
               </li>
             ))}
@@ -210,15 +214,16 @@ export default function PortfolioPage() {
               {fmtDateTime(lastTrade.at)} · edge {fmtPct(lastTrade.edge)}
               {lastTrade.dryRun ? " · dry-run" : ""}
             </p>
-            <p className="leading-relaxed text-zinc-300">{lastTrade.reason}</p>
+            <p className="leading-relaxed text-desk-ink/85">{lastTrade.reason}</p>
             {lastTrade.txHash && (
               <a
                 href={explorerTxUrl(lastTrade.txHash)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-block font-mono text-xs text-desk-cyan hover:underline"
+                className="inline-flex items-center gap-1 font-mono text-xs text-desk-accent hover:underline"
               >
-                {shortHash(lastTrade.txHash)} ↗
+                {shortHash(lastTrade.txHash)}
+                <ArrowSquareOut size={11} />
               </a>
             )}
           </div>
@@ -242,12 +247,10 @@ function MiniStat({
   tone?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3">
-      <p className="text-[11px] uppercase tracking-wider text-desk-muted">
-        {label}
-      </p>
+    <div className="rounded-desk-lg border border-desk-border bg-desk-panel px-4 py-3">
+      <p className="text-[11px] font-medium text-desk-muted">{label}</p>
       <p
-        className={`mt-1 font-mono text-xl font-semibold ${
+        className={`mt-1 font-mono text-xl font-semibold tabular ${
           accent ? "text-desk-accent" : ""
         } ${tone}`}
       >

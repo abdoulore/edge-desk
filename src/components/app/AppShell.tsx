@@ -3,92 +3,111 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
+import {
+  ChartLine,
+  SquaresFour,
+  Wallet,
+  Pulse,
+  GearSix,
+} from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import ConnectButton from "@/wallet/ConnectButton";
 
 const NAV = [
-  { href: "/app/desk", label: "Desk" },
-  { href: "/app/markets", label: "Markets" },
-  { href: "/app/portfolio", label: "Portfolio" },
-  { href: "/app/activity", label: "Activity" },
-  { href: "/app/settings", label: "Settings" },
+  { href: "/app/desk", label: "Desk", icon: ChartLine },
+  { href: "/app/markets", label: "Markets", icon: SquaresFour },
+  { href: "/app/portfolio", label: "Portfolio", icon: Wallet },
+  { href: "/app/activity", label: "Activity", icon: Pulse },
+  { href: "/app/settings", label: "Settings", icon: GearSix },
 ];
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { status } = useDeskStatus({ pollMs: 12000, autoTick: false });
 
+  const modeLabel = status
+    ? status.paused
+      ? "PAUSED"
+      : status.dryRun
+        ? "SIGNAL"
+        : "LIVE"
+    : "...";
+
   return (
     <div className="min-h-dvh bg-desk-bg">
-      <header className="sticky top-0 z-40 border-b border-desk-border/80 bg-desk-bg/90 backdrop-blur-md">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-3 px-4 py-3">
-          <div className="flex items-center gap-3">
-            <Link href="/" className="flex items-center gap-2">
-              <span className="flex h-7 w-7 items-center justify-center rounded-md border border-desk-accent/30 bg-desk-accent/10 font-mono text-[11px] text-desk-accent">
+      <header className="sticky top-0 z-40 border-b border-desk-border/80 bg-desk-bg/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-3 px-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Link href="/" className="flex shrink-0 items-center gap-2.5">
+              <span className="flex h-7 w-7 items-center justify-center rounded-desk-sm border border-desk-accent/30 bg-desk-accent/10 font-mono text-[11px] font-semibold text-desk-accent">
                 ed
               </span>
-              <span className="hidden text-sm font-semibold sm:inline">
+              <span className="hidden text-sm font-semibold tracking-tight sm:inline">
                 Edge Desk
               </span>
             </Link>
             <span
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
-                status?.dryRun
+                status?.paused
                   ? "border-desk-warn/40 text-desk-warn"
-                  : "border-desk-accent/40 text-desk-accent"
+                  : status?.dryRun
+                    ? "border-desk-warn/40 text-desk-warn"
+                    : "border-desk-accent/40 text-desk-accent"
               }`}
             >
               <span
                 className={`live-dot h-1.5 w-1.5 rounded-full ${
-                  status?.dryRun ? "bg-desk-warn" : "bg-desk-accent"
+                  status?.paused || status?.dryRun
+                    ? "bg-desk-warn"
+                    : "bg-desk-accent"
                 }`}
               />
-              {status
-                ? status.paused
-                  ? "PAUSED"
-                  : status.dryRun
-                    ? "SIGNAL"
-                    : "LIVE"
-                : "…"}
-              {status?.network ? ` · ${status.network}` : ""}
+              {modeLabel}
+              {status?.network ? (
+                <span className="hidden text-desk-muted sm:inline">
+                  {" "}
+                  · {status.network}
+                </span>
+              ) : null}
             </span>
           </div>
           <div className="flex items-center gap-2">
             {status?.agentStalled && (
-              <span className="hidden rounded-full border border-desk-down/40 px-2 py-0.5 text-[10px] text-desk-down sm:inline">
+              <span className="hidden rounded-full border border-desk-down/40 px-2 py-0.5 text-[10px] text-desk-down md:inline">
                 agent stale
-              </span>
-            )}
-            {status?.paused && (
-              <span className="hidden rounded-full border border-desk-warn/40 px-2 py-0.5 text-[10px] text-desk-warn sm:inline">
-                paused
               </span>
             )}
             <ConnectButton />
           </div>
         </div>
-        <nav className="mx-auto flex w-full max-w-5xl gap-1 overflow-x-auto px-3 pb-2">
+        <nav className="mx-auto flex h-11 w-full max-w-6xl items-center gap-0.5 overflow-x-auto px-3 pb-2">
           {NAV.map((item) => {
             const active =
               pathname === item.href ||
               (item.href === "/app/desk" && pathname === "/app");
+            const Icon = item.icon;
             return (
               <Link
                 key={item.href}
                 href={item.href}
-                className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                className={`inline-flex shrink-0 items-center gap-1.5 rounded-desk-sm px-3 py-1.5 text-xs font-medium transition ${
                   active
                     ? "bg-white/10 text-white"
-                    : "text-desk-muted hover:bg-white/5 hover:text-zinc-200"
+                    : "text-desk-muted hover:bg-white/5 hover:text-desk-ink"
                 }`}
               >
+                <Icon
+                  size={15}
+                  weight={active ? "fill" : "regular"}
+                  className="opacity-80"
+                />
                 {item.label}
               </Link>
             );
           })}
         </nav>
       </header>
-      <div className="mx-auto w-full max-w-5xl px-4 py-5 pb-12">{children}</div>
+      <div className="mx-auto w-full max-w-6xl px-4 py-5 pb-14">{children}</div>
     </div>
   );
 }

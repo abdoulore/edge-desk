@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { ArrowsClockwise } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
-import { Badge, Panel, StateBlock } from "@/components/ui";
+import { Badge, Panel, StateBlock, PageHeader } from "@/components/ui";
 import { fmtCountdown, fmtInterval, fmtPct } from "@/lib/format";
 
 export default function MarketsPage() {
@@ -16,10 +17,12 @@ export default function MarketsPage() {
   }, []);
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading markets…" />;
+    return <StateBlock kind="loading" title="Loading markets..." />;
   }
   if (error && !status) {
-    return <StateBlock kind="error" title="Could not load markets" detail={error} />;
+    return (
+      <StateBlock kind="error" title="Could not load markets" detail={error} />
+    );
   }
 
   const markets = status?.markets ?? [];
@@ -27,23 +30,20 @@ export default function MarketsPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-      <div className="flex items-end justify-between gap-3">
-        <div>
-          <p className="text-[11px] uppercase tracking-[0.2em] text-desk-muted">
-            Markets
-          </p>
-          <h1 className="text-2xl font-semibold tracking-tight">
-            Live binary windows
-          </h1>
-        </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="rounded-lg border border-desk-border px-3 py-1.5 text-xs text-desk-muted hover:text-white"
-        >
-          Refresh
-        </button>
-      </div>
+      <PageHeader
+        kicker="Markets"
+        title="Live binary windows"
+        action={
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="inline-flex items-center gap-1.5 rounded-desk-sm border border-desk-border px-3 py-1.5 text-xs text-desk-muted transition hover:text-desk-ink"
+          >
+            <ArrowsClockwise size={13} />
+            Refresh
+          </button>
+        }
+      />
 
       {markets.length === 0 ? (
         <StateBlock
@@ -68,9 +68,11 @@ export default function MarketsPage() {
                   >
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-semibold">{m.asset || "—"}</span>
+                        <span className="font-semibold">{m.asset || "-"}</span>
                         <Badge>{fmtInterval(m.intervalSec)}</Badge>
-                        <Badge tone={m.status === "Trading" ? "up" : "neutral"}>
+                        <Badge
+                          tone={m.status === "Trading" ? "up" : "neutral"}
+                        >
                           {m.status}
                         </Badge>
                         {active && <Badge tone="cyan">focused</Badge>}
@@ -80,18 +82,14 @@ export default function MarketsPage() {
                       </p>
                     </div>
                     <div className="text-right">
-                      <p className="font-mono text-sm tabular-nums text-desk-accent">
-                        {m.upMid != null && m.midFresh !== false
-                          ? fmtPct(m.upMid)
-                          : m.upMid != null
-                            ? fmtPct(m.upMid)
-                            : "—"}
+                      <p className="font-mono text-sm tabular text-desk-accent">
+                        {m.upMid != null ? fmtPct(m.upMid) : "-"}
                       </p>
                       {m.upMid == null && (
                         <p className="text-[10px] text-desk-muted">no book</p>
                       )}
                       <p
-                        className="font-mono text-[11px] text-desk-muted tabular-nums"
+                        className="font-mono text-[11px] text-desk-muted tabular"
                         suppressHydrationWarning
                       >
                         {fmtCountdown(m.expiry, now)} left
