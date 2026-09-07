@@ -58,10 +58,6 @@ Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 - PREFERRED_ASSET=BTC
 - PREFERRED_INTERVAL_SEC=900
 
-## Demo
-
-See DEMO.md.
-
 ## Gotchas respected
 
 - Gate writes on on-chain status === 1 (Trading)
