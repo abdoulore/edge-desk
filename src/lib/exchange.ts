@@ -2,6 +2,7 @@ import {
   SomniaMarkets,
   SOMNIA_MAINNET_ADDRESSES,
   SOMNIA_TESTNET_ADDRESSES,
+  SOMNIA_TESTNET_PRICE_FEED,
 } from "@somnia-chain/markets-sdk";
 import { somniaMainnet, somniaShannon } from "@somnia-chain/markets-sdk/chains";
 import { getConfig } from "./config";
@@ -20,6 +21,8 @@ export function getExchange(): SomniaMarkets {
     chain: isTestnet ? somniaShannon : somniaMainnet,
     wsRpcUrl: cfg.wsRpcUrl,
     addresses: isTestnet ? SOMNIA_TESTNET_ADDRESSES : SOMNIA_MAINNET_ADDRESSES,
+    // Spot index for edge math (testnet price-feed indexer).
+    ...(isTestnet ? { priceFeed: SOMNIA_TESTNET_PRICE_FEED } : {}),
     ...(cfg.privateKey ? { privateKey: cfg.privateKey as `0x${string}` } : {}),
   });
 

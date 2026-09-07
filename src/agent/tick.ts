@@ -87,7 +87,7 @@ async function loadOutcomeIndex(
   const byMarketId = new Map<string, OutcomeEntry>();
   try {
     const map = await exchange.loadMarkets(true);
-    for (const m of Object.values(map) as Record<string, unknown>[]) {
+    for (const m of Object.values(map) as unknown as Record<string, unknown>[]) {
       const info = m.info as Record<string, unknown> | undefined;
       const marketId = String(info?.marketId || m.id || "").toLowerCase();
       if (!marketId) continue;
@@ -224,18 +224,33 @@ async function loadCandidateMarkets(exchange: ReturnType<typeof getExchange>) {
     // Prefer BTC 15m when present; always require a tradeable Up (#YES) symbol.
     .filter((x) => x.marketId && x.secondsLeft > 60 && Boolean(x.upSymbol));
 
-  scored.sort((a, b) => {
+  // Hard-prefer PREFERRED_INTERVAL_SEC (BTC 15m). Skip daily/86400 whenever a
+  // preferred-interval Trading candidate exists for the preferred asset.
+  const hasPreferredWindow = scored.some(
+    (x) =>
+      x.asset === cfg.preferredAsset &&
+      x.intervalSec === cfg.preferredIntervalSec,
+  );
+  const pool = hasPreferredWindow
+    ? scored.filter((x) => x.intervalSec !== 86400)
+    : scored;
+
+  pool.sort((a, b) => {
     const prefA =
-      (a.asset === cfg.preferredAsset ? 0 : 1) * 10 +
-      (a.intervalSec === cfg.preferredIntervalSec ? 0 : 1);
+      (a.asset === cfg.preferredAsset ? 0 : 1) * 100 +
+      (a.intervalSec === cfg.preferredIntervalSec ? 0 : 1) * 10 +
+      (a.intervalSec === 86400 ? 1 : 0);
     const prefB =
-      (b.asset === cfg.preferredAsset ? 0 : 1) * 10 +
-      (b.intervalSec === cfg.preferredIntervalSec ? 0 : 1);
+      (b.asset === cfg.preferredAsset ? 0 : 1) * 100 +
+      (b.intervalSec === cfg.preferredIntervalSec ? 0 : 1) * 10 +
+      (b.intervalSec === 86400 ? 1 : 0);
     if (prefA !== prefB) return prefA - prefB;
+    // Among non-preferred windows, prefer shorter cadences (closer to 15m).
+    if (a.intervalSec !== b.intervalSec) return a.intervalSec - b.intervalSec;
     return b.secondsLeft - a.secondsLeft;
   });
 
-  return scored;
+  return pool;
 }
 
 async function readSpot(
@@ -267,41 +282,93 @@ async function readSpot(
   return null;
 }
 
+/** OracleHub / explorer answers use 2 decimal places (ORACLE_PRICE_DECIMALS). */
+const ORACLE_PRICE_SCALE = 100;
+
+/**
+ * Convert a raw oracle numericValue / strike into human USD units (same as spot).
+ * Prefer opening-price scale (/100). Reject values that are clearly 50–200× spot.
+ */
+function normalizeOraclePrice(
+  raw: number,
+  spot?: number | null,
+): number | null {
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+
+  let human: number;
+  if (raw >= 1e14) {
+    // Price-feed adapter answers are 1e18-scaled.
+    human = raw / 1e18;
+  } else {
+    // OracleHub reference/strike: cents-style 2-decimal encoding.
+    human = raw / ORACLE_PRICE_SCALE;
+  }
+
+  if (spot != null && spot > 0) {
+    const ratio = human / spot;
+    // Already sensible vs spot.
+    if (ratio >= 0.2 && ratio <= 5) return human;
+    // Classic bug: forgot /100 → ~100× spot. Repair once.
+    const repaired = human / ORACLE_PRICE_SCALE;
+    const repairedRatio = repaired / spot;
+    if (ratio >= 50 && ratio <= 200 && repairedRatio >= 0.2 && repairedRatio <= 5) {
+      return repaired;
+    }
+    // Raw looked already-human (no /100 needed).
+    const rawRatio = raw / spot;
+    if (rawRatio >= 0.2 && rawRatio <= 5) return raw;
+    // Still mangled (50–200× or worse) — refuse rather than fake a −99% move.
+    if (ratio > 20 || ratio < 0.05) return null;
+  }
+
+  return human;
+}
+
+function extractOracleNumeric(v: unknown): number | null {
+  if (v == null) return null;
+  if (typeof v === "string" || typeof v === "number" || typeof v === "bigint") {
+    return asNum(v);
+  }
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return (
+      asNum(o.openingPrice) ??
+      asNum(o.price) ??
+      asNum(o.numericValue) ??
+      asNum((o.openingAnswer as { numericValue?: unknown } | undefined)?.numericValue) ??
+      null
+    );
+  }
+  return null;
+}
+
 async function readReference(
   exchange: ReturnType<typeof getExchange>,
   marketId: string,
   row: Record<string, unknown>,
+  spot?: number | null,
 ): Promise<number | null> {
-  const strike = asNum(row.strike);
-  if (strike != null && strike > 0) {
-    // strike may be scaled; if huge, treat as 1e18 fixed
-    if (strike > 1e9) return strike / 1e18;
-    return strike;
-  }
-
+  // Prefer the window opening price (reference-mode markets have strike 0).
   try {
     const client = exchange.client as unknown as {
       getOpeningPrices?: (ids: string[]) => Promise<unknown>;
     };
     if (typeof client.getOpeningPrices === "function") {
       const opens = await client.getOpeningPrices([marketId]);
-      if (Array.isArray(opens) && opens[0]) {
-        const o = opens[0] as Record<string, unknown>;
-        const n =
-          asNum(o.openingPrice) ??
-          asNum(o.price) ??
-          asNum(o.numericValue) ??
-          asNum((o.openingAnswer as { numericValue?: unknown } | undefined)?.numericValue);
-        if (n != null && n > 0) {
-          return n > 1e9 ? n / 1e18 : n;
-        }
+      if (Array.isArray(opens) && opens[0] != null) {
+        const n = extractOracleNumeric(opens[0]);
+        const human = n != null ? normalizeOraclePrice(n, spot) : null;
+        if (human != null) return human;
       } else if (opens && typeof opens === "object") {
         const map = opens as Record<string, unknown>;
-        const o = (map[marketId] || Object.values(map)[0]) as Record<string, unknown> | undefined;
-        if (o) {
-          const n = asNum(o.openingPrice) ?? asNum(o.price) ?? asNum(o.numericValue);
-          if (n != null && n > 0) return n > 1e9 ? n / 1e18 : n;
-        }
+        const key = marketId.toLowerCase();
+        const rawVal =
+          map[key] ??
+          map[marketId] ??
+          Object.values(map).find((v) => v != null);
+        const n = extractOracleNumeric(rawVal);
+        const human = n != null ? normalizeOraclePrice(n, spot) : null;
+        if (human != null) return human;
       }
     }
   } catch {
@@ -316,10 +383,18 @@ async function readReference(
       const res = await client.getMarketResolution(marketId);
       const opening = res?.openingAnswer as { numericValue?: unknown } | undefined;
       const n = asNum(opening?.numericValue);
-      if (n != null && n > 0) return n > 1e9 ? n / 1e18 : n;
+      const human = n != null ? normalizeOraclePrice(n, spot) : null;
+      if (human != null) return human;
     }
   } catch {
     /* ignore */
+  }
+
+  // Fixed-strike markets: strike itself is the threshold (same oracle scale).
+  const strike = asNum(row.strike);
+  if (strike != null && strike > 0) {
+    const human = normalizeOraclePrice(strike, spot);
+    if (human != null) return human;
   }
 
   return null;
@@ -706,7 +781,12 @@ export async function runAgentTick(): Promise<DeskSignal> {
     signal.upMid = mid;
 
     const spot = await readSpot(exchange, signal.asset);
-    let reference = await readReference(exchange, chosen.marketId, chosen.m);
+    let reference = await readReference(
+      exchange,
+      chosen.marketId,
+      chosen.m,
+      spot,
+    );
     // If no opening reference yet, seed with spot so bias≈0.5 (neutral)
     if (reference == null && spot != null) reference = spot;
 
