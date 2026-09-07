@@ -4,16 +4,21 @@ Explainable rule-based trading agent + product site (landing + multi-page app) f
 
 Built for the **Somnia x DreamDEX Event Contracts** hackathon. No LLM — every trade comes with a one-sentence plain-English reason.
 
+## Product model
+
+Users bring their own Shannon wallet. The server agent computes edge and reasons; it does not place live IOC unless AGENT_TRADE is explicitly enabled. Copy/Claim use wagmi walletClient with markets-sdk.
+
 ## Pitch
 
 Event Contract books quote Up as a probability in (0, 1). Spot often moves before the book catches up. Edge Desk watches a live window (prefer BTC 15m), compares spot vs window reference to a fair Up probability, subtracts the book mid, and only crosses with IOC when |edge| >= threshold.
 
 ## Architecture
 
-- Agent (`src/agent/tick.ts`): load live binary markets, gate onchain.status === 1, book + spot/reference, edge, IOC when edged, persist data/lastSignal.json.
-- APIs: GET /api/status, POST /api/copy, POST /api/claim, POST /api/agent/tick.
-- UI: marketing landing + app shell (Desk / Markets / Portfolio / Activity / Settings); desk polls tick every ~8s.
-- DRY_RUN defaults true. Key by marketId/symbol — never pool address.
+- Non-custodial: users connect Shannon wallet; Copy/Claim sign client-side.
+- Agent (`src/agent/tick.ts`): signal-only by default (edge/reason/markets); mutex; persist data/lastSignal.json.
+- APIs: GET /api/status, POST /api/agent/tick (signal), POST /api/focus, POST /api/pause. Custodial copy/claim require EDGE_DESK_SECRET.
+- UI polls /api/status only (no dual trading tick). wagmi ConnectButton in AppShell.
+- DRY_RUN=true and AGENT_TRADE=false by default. Key by marketId/symbol — never pool address.
 
 ## Edge formula
 
@@ -29,7 +34,7 @@ trade Down if edge  <= -EDGE_THRESHOLD
 ## Stack
 
 - Next.js App Router + TypeScript + Tailwind
-- @somnia-chain/markets-sdk >= 0.29.0 + viem
+- @somnia-chain/markets-sdk >= 0.29.0 + viem + wagmi v2 + @tanstack/react-query
 - Shannon testnet 50312
 - Event contracts via SDK only (no DreamDEX HTTP API)
 
@@ -49,9 +54,11 @@ Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 
 ### Env
 
-- PRIVATE_KEY — optional in dry-run; required for live IOC / claim
+- PRIVATE_KEY — optional (not required for users)
 - NETWORK=testnet
 - DRY_RUN=true
+- AGENT_TRADE=false — keep false for signal-only agent
+- EDGE_DESK_SECRET — optional; gates custodial copy/claim
 - EDGE_THRESHOLD=0.05
 - COPY_SIZE=1
 - VENUE_ID — testnet venue default in .env.example
@@ -62,7 +69,7 @@ Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 
 - Gate writes on on-chain status === 1 (Trading)
 - Key by marketId / symbol, never pool address
-- IOC for takers
+- IOC for takers (connected wallet)
 - Voided: redeem both sides at 0.5
 - Settled via listBinaryMarkets status Finalized
 

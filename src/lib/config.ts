@@ -15,10 +15,21 @@ export function getConfig() {
   const network = (process.env.NETWORK || "testnet").toLowerCase();
   const isTestnet = network !== "mainnet";
 
+  // Agent live trading is off by default. Even if DRY_RUN=false, AGENT_TRADE
+  // must be explicitly true for the server agent to place IOC from PRIVATE_KEY.
+  const agentTrade = envBool("AGENT_TRADE", false);
+  const dryRunEnv = envBool("DRY_RUN", true);
+  // Effective dry-run for the server agent: always dry unless AGENT_TRADE=true
+  // and DRY_RUN=false. Product default is signal-only.
+  const dryRun = !agentTrade || dryRunEnv;
+
   return {
-    network: isTestnet ? "testnet" : "mainnet",
+    network: isTestnet ? ("testnet" as const) : ("mainnet" as const),
+    /** Optional — only needed for gated server mutations / optional agent live trade. */
     privateKey: process.env.PRIVATE_KEY || undefined,
-    dryRun: envBool("DRY_RUN", true),
+    dryRun,
+    /** Explicit gate for server-side agent IOC. Default false. */
+    agentTrade,
     edgeThreshold: envNum("EDGE_THRESHOLD", 0.05),
     copySize: envNum("COPY_SIZE", 1),
     venueId:
@@ -44,6 +55,8 @@ export function getConfig() {
     preferredAsset: (process.env.PREFERRED_ASSET || "BTC").toUpperCase(),
     preferredIntervalSec: envNum("PREFERRED_INTERVAL_SEC", 900),
     agentIntervalMs: envNum("AGENT_INTERVAL_MS", 8000),
+    /** When set, custodial POST /api/copy|/api/claim require this header. */
+    edgeDeskSecret: process.env.EDGE_DESK_SECRET || undefined,
   };
 }
 

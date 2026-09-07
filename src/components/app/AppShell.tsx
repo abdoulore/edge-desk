@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
-import { shortAddr } from "@/lib/format";
+import ConnectButton from "@/wallet/ConnectButton";
 
 const NAV = [
   { href: "/app/desk", label: "Desk" },
@@ -43,12 +43,28 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   status?.dryRun ? "bg-desk-warn" : "bg-desk-accent"
                 }`}
               />
-              {status ? (status.dryRun ? "DRY" : "LIVE") : "…"}
+              {status
+                ? status.paused
+                  ? "PAUSED"
+                  : status.dryRun
+                    ? "SIGNAL"
+                    : "LIVE"
+                : "…"}
               {status?.network ? ` · ${status.network}` : ""}
             </span>
           </div>
-          <div className="font-mono text-[11px] text-desk-muted">
-            {status?.wallet ? shortAddr(status.wallet) : "read-only"}
+          <div className="flex items-center gap-2">
+            {status?.agentStalled && (
+              <span className="hidden rounded-full border border-desk-down/40 px-2 py-0.5 text-[10px] text-desk-down sm:inline">
+                agent stale
+              </span>
+            )}
+            {status?.paused && (
+              <span className="hidden rounded-full border border-desk-warn/40 px-2 py-0.5 text-[10px] text-desk-warn sm:inline">
+                paused
+              </span>
+            )}
+            <ConnectButton />
           </div>
         </div>
         <nav className="mx-auto flex w-full max-w-5xl gap-1 overflow-x-auto px-3 pb-2">

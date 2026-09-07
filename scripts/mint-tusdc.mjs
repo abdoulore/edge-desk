@@ -1,9 +1,10 @@
 import { createWalletClient, createPublicClient, http, parseAbi, formatUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { readFileSync } from "fs";
+import { join } from "path";
 
 const env = Object.fromEntries(
-  readFileSync("/workspace/edge-desk/.env", "utf8")
+  readFileSync(join(process.cwd(), ".env"), "utf8")
     .split("\n")
     .filter((l) => l && !l.startsWith("#") && l.includes("="))
     .map((l) => {

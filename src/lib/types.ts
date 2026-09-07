@@ -9,6 +9,8 @@ export type MarketStatusLabel =
   | "Voided"
   | "Unknown";
 
+export type SpotSource = "sdk" | "coingecko" | "none";
+
 export interface LastTrade {
   marketId: string;
   symbol: string;
@@ -37,6 +39,8 @@ export interface DeskSignal {
   upAsk: number | null;
   upMid: number | null;
   spot: number | null;
+  /** Where spot came from — only "sdk" drives trading signals. */
+  spotSource?: SpotSource;
   reference: number | null;
   spotImpliedBias: number | null;
   edge: number | null;
@@ -50,6 +54,8 @@ export interface DeskSignal {
   updatedAt: string;
   lastTrade: LastTrade | null;
   error?: string;
+  /** True when preferred asset/interval window is not among live Trading candidates. */
+  preferredMissing?: boolean;
 }
 
 export interface MarketSummary {
@@ -60,7 +66,10 @@ export interface MarketSummary {
   status: MarketStatusLabel;
   statusCode: number;
   upMid: number | null;
+  /** True when upMid is from this tick's book read (not stale/unknown). */
+  midFresh?: boolean;
   symbol?: string;
+  upSymbol?: string;
   secondsLeft?: number;
 }
 
@@ -83,6 +92,7 @@ export interface ActivityEvent {
 export interface DeskConfigView {
   network: string;
   dryRun: boolean;
+  agentTrade: boolean;
   edgeThreshold: number;
   copySize: number;
   venueId: string;
@@ -95,6 +105,7 @@ export interface DeskStatus {
   ok: boolean;
   network: string;
   dryRun: boolean;
+  /** Deprecated server hot-wallet — prefer connected browser wallet. */
   wallet?: string;
   signal: DeskSignal | null;
   claimable: ClaimablePosition[];
@@ -102,7 +113,11 @@ export interface DeskStatus {
   activity: ActivityEvent[];
   config: DeskConfigView;
   agentRunning: boolean;
+  agentStalled: boolean;
+  paused: boolean;
   lastTickAt: string | null;
+  focusMarketId: string | null;
+  preferredMissing: boolean;
 }
 
 export interface ClaimablePosition {

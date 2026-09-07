@@ -81,8 +81,15 @@ export default function MarketsPage() {
                     </div>
                     <div className="text-right">
                       <p className="font-mono text-sm tabular-nums text-desk-accent">
-                        {m.upMid != null ? fmtPct(m.upMid) : "—"}
+                        {m.upMid != null && m.midFresh !== false
+                          ? fmtPct(m.upMid)
+                          : m.upMid != null
+                            ? fmtPct(m.upMid)
+                            : "—"}
                       </p>
+                      {m.upMid == null && (
+                        <p className="text-[10px] text-desk-muted">no book</p>
+                      )}
                       <p
                         className="font-mono text-[11px] text-desk-muted tabular-nums"
                         suppressHydrationWarning

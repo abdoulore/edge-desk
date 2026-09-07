@@ -8,11 +8,10 @@ export function useDeskStatus(opts?: {
   autoTick?: boolean;
 }) {
   const pollMs = opts?.pollMs ?? 8000;
-  const autoTick = opts?.autoTick ?? false;
   const [status, setStatus] = useState<DeskStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"copy" | "claim" | "tick" | null>(null);
+  const [busy, setBusy] = useState<"tick" | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -41,69 +40,10 @@ export function useDeskStatus(opts?: {
   }, [refresh]);
 
   useEffect(() => {
-    if (autoTick) {
-      void tick();
-      const poll = setInterval(() => void tick(), pollMs);
-      return () => clearInterval(poll);
-    }
     void refresh();
     const poll = setInterval(() => void refresh(), pollMs);
     return () => clearInterval(poll);
-  }, [autoTick, pollMs, refresh, tick]);
+  }, [pollMs, refresh]);
 
-  const copy = useCallback(async () => {
-    setBusy("copy");
-    try {
-      const res = await fetch("/api/copy", { method: "POST" });
-      const json = (await res.json()) as { ok: boolean; message: string };
-      await refresh();
-      return json;
-    } catch (e) {
-      return {
-        ok: false,
-        message: e instanceof Error ? e.message : "Copy failed",
-      };
-    } finally {
-      setBusy(null);
-    }
-  }, [refresh]);
-
-  const claim = useCallback(
-    async (marketId?: string) => {
-      const id = marketId || status?.claimable?.[0]?.marketId;
-      if (!id) {
-        return { ok: false, message: "Nothing claimable yet" };
-      }
-      setBusy("claim");
-      try {
-        const res = await fetch("/api/claim", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ marketId: id }),
-        });
-        const json = (await res.json()) as { ok: boolean; message: string };
-        await refresh();
-        return json;
-      } catch (e) {
-        return {
-          ok: false,
-          message: e instanceof Error ? e.message : "Claim failed",
-        };
-      } finally {
-        setBusy(null);
-      }
-    },
-    [refresh, status?.claimable],
-  );
-
-  return {
-    status,
-    loading,
-    error,
-    busy,
-    refresh,
-    tick,
-    copy,
-    claim,
-  };
+  return { status, loading, error, busy, refresh, tick };
 }

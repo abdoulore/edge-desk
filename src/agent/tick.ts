@@ -8,10 +8,13 @@ import {
   spotImpliedBias,
 } from "@/lib/edge";
 import { getExchange, oracleGraphUrl, statusLabel } from "@/lib/exchange";
+import { withMutex } from "@/lib/mutex";
+import { buildCopyOrderParams } from "@/lib/orderParams";
 import {
   appendActivity,
   getClaimable,
   getMarkets,
+  readMeta,
   readSignal,
   setClaimable,
   setMarkets,
@@ -24,6 +27,7 @@ import type {
   LastTrade,
   MarketSummary,
   Side,
+  SpotSource,
 } from "@/lib/types";
 
 function asNum(v: unknown): number | null {
@@ -257,7 +261,7 @@ async function loadCandidateMarkets(exchange: ReturnType<typeof getExchange>) {
   return pool;
 }
 
-async function readSpot(
+async function readSpotSdk(
   exchange: ReturnType<typeof getExchange>,
   asset: string,
 ): Promise<number | null> {
@@ -268,8 +272,11 @@ async function readSpot(
   } catch {
     /* ignore */
   }
+  return null;
+}
 
-  // External public fallback (read-only) for demo when SDK feed unavailable
+/** Display-only fallback — never drives recommendedSide / agent trades. */
+async function readSpotCoinGecko(asset: string): Promise<number | null> {
   try {
     const id = asset === "ETH" ? "ethereum" : "bitcoin";
     const res = await fetch(
@@ -284,6 +291,17 @@ async function readSpot(
     /* ignore */
   }
   return null;
+}
+
+async function readSpotLabeled(
+  exchange: ReturnType<typeof getExchange>,
+  asset: string,
+): Promise<{ spot: number | null; source: SpotSource }> {
+  const sdk = await readSpotSdk(exchange, asset);
+  if (sdk != null) return { spot: sdk, source: "sdk" };
+  const cg = await readSpotCoinGecko(asset);
+  if (cg != null) return { spot: cg, source: "coingecko" };
+  return { spot: null, source: "none" };
 }
 
 /** OracleHub / explorer answers use 2 decimal places (ORACLE_PRICE_DECIMALS). */
@@ -515,7 +533,7 @@ export async function claimMarket(marketId: string): Promise<{
     return { ok: true, txs: [], message: "DRY_RUN: would redeem claimable outcomes" };
   }
   if (!cfg.privateKey) {
-    return { ok: false, txs: [], message: "PRIVATE_KEY required to claim" };
+    return { ok: false, txs: [], message: "PRIVATE_KEY required for server claim — use connected wallet instead" };
   }
 
   const exchange = getExchange();
@@ -605,26 +623,18 @@ export async function copyLastTrade(): Promise<{
     (signal.recommendedSide as Side | null);
   if (!side) return { ok: false, message: "No side to copy" };
 
-  const size = cfg.copySize;
-  const symbol = side === "Up" ? signal.upSymbol : signal.downSymbol;
-  if (!symbol) return { ok: false, message: "Missing outcome symbol" };
-
-  // Cross the touch: buy Up at ask+slip, buy Down via Down symbol (SDK converts)
-  const bid = signal.upBid;
-  const ask = signal.upAsk;
-  let limit: number;
-  if (side === "Up") {
-    if (ask == null) return { ok: false, message: "No Up ask to cross" };
-    limit = Math.min(0.99, ask + 0.02);
-  } else {
-    // Buying Down: use Down symbol; price still in Up terms for some APIs —
-    // unified createOrder on Down symbol accepts Down price = 1 - up.
-    const downAsk = ask != null ? 1 - (bid ?? ask) : null;
-    // Prefer crossing via Up book: buy Down ≈ sell Up; use Down symbol with IOC
-    const impliedDownAsk = bid != null ? 1 - bid : ask != null ? 1 - ask : null;
-    if (impliedDownAsk == null) return { ok: false, message: "No Down price" };
-    limit = Math.min(0.99, impliedDownAsk + 0.02);
-  }
+  const built = buildCopyOrderParams({
+    side,
+    upSymbol: signal.upSymbol,
+    downSymbol: signal.downSymbol,
+    upBid: signal.upBid,
+    upAsk: signal.upAsk,
+    size: cfg.copySize,
+    marketId: signal.marketId,
+    edge: signal.edge,
+  });
+  if (!built.ok) return { ok: false, message: built.message };
+  const { symbol, size, limitPrice: limit } = built.params;
 
   if (cfg.dryRun) {
     const trade: LastTrade = {
@@ -654,10 +664,9 @@ export async function copyLastTrade(): Promise<{
   }
 
   if (!cfg.privateKey) {
-    return { ok: false, message: "PRIVATE_KEY required for copy" };
+    return { ok: false, message: "PRIVATE_KEY required for server copy — use connected wallet instead" };
   }
 
-  // Gate on-chain Trading
   const exchange = getExchange();
   const onchain = await exchange.client.getMarketOnchain(
     signal.marketId as `0x${string}`,
@@ -696,10 +705,60 @@ export async function copyLastTrade(): Promise<{
 }
 
 export async function runAgentTick(): Promise<DeskSignal> {
+  return withMutex(() => runAgentTickUnlocked());
+}
+
+async function runAgentTickUnlocked(): Promise<DeskSignal> {
   const cfg = getConfig();
-  const exchange = getExchange();
+  const meta = await readMeta();
   const updatedAt = new Date().toISOString();
 
+  if (meta.paused) {
+    const prev = await readSignal();
+    const pausedSignal: DeskSignal = {
+      ...(prev || {
+        marketId: "",
+        symbol: "",
+        upSymbol: "",
+        downSymbol: "",
+        asset: cfg.preferredAsset,
+        intervalSec: cfg.preferredIntervalSec,
+        expiry: 0,
+        status: "Unknown" as const,
+        statusCode: -1,
+        upBid: null,
+        upAsk: null,
+        upMid: null,
+        spot: null,
+        reference: null,
+        spotImpliedBias: null,
+        edge: null,
+        recommendedSide: null,
+        reason: "Agent paused",
+        dryRun: cfg.dryRun,
+        edgeThreshold: cfg.edgeThreshold,
+        copySize: cfg.copySize,
+        lastTrade: null,
+      }),
+      reason: "Agent paused — signal loop idle (resume in Settings).",
+      dryRun: cfg.dryRun,
+      updatedAt,
+      preferredMissing: prev?.preferredMissing,
+    };
+    await writeSignal(pausedSignal);
+    await writeMeta({
+      ...meta,
+      agentRunning: true,
+      lastTickAt: updatedAt,
+      lastError: undefined,
+    });
+    return pausedSignal;
+  }
+
+  const exchange = getExchange();
+  const focusMarketId = (meta.focusMarketId || "").toLowerCase() || null;
+
+  let tradedThisTick = false;
   let signal: DeskSignal = {
     marketId: "",
     symbol: "",
@@ -714,6 +773,7 @@ export async function runAgentTick(): Promise<DeskSignal> {
     upAsk: null,
     upMid: null,
     spot: null,
+    spotSource: "none",
     reference: null,
     spotImpliedBias: null,
     edge: null,
@@ -724,28 +784,61 @@ export async function runAgentTick(): Promise<DeskSignal> {
     copySize: cfg.copySize,
     updatedAt,
     lastTrade: (await readSignal())?.lastTrade ?? null,
+    preferredMissing: false,
   };
 
   try {
     const candidates = await loadCandidateMarkets(exchange);
-    setMarkets(
-      candidates.slice(0, 24).map((c): MarketSummary => ({
+
+    const preferredMissing = !candidates.some(
+      (c) =>
+        c.asset === cfg.preferredAsset &&
+        c.intervalSec === cfg.preferredIntervalSec,
+    );
+    signal.preferredMissing = preferredMissing;
+
+    // Enrich markets list with per-row book mids (best-effort, capped).
+    const marketRows: MarketSummary[] = [];
+    for (const c of candidates.slice(0, 24)) {
+      let upMid: number | null = null;
+      let midFresh = false;
+      const upSym = c.upSymbol;
+      if (upSym) {
+        try {
+          const book = await exchange.fetchOrderBook(upSym, 3);
+          const bid = asNum(book.bids?.[0]?.[0]);
+          const ask = asNum(book.asks?.[0]?.[0]);
+          upMid = bookMid(bid, ask);
+          midFresh = upMid != null;
+        } catch {
+          upMid = null;
+        }
+      }
+      marketRows.push({
         marketId: c.marketId,
         asset: c.asset || cfg.preferredAsset,
         intervalSec: c.intervalSec,
         expiry: c.expiry,
         status: "Trading",
         statusCode: 1,
-        upMid: null,
+        upMid,
+        midFresh,
         symbol: String(c.m.symbol || ""),
+        upSymbol: upSym,
         secondsLeft: Math.max(0, Math.floor(c.secondsLeft)),
-      })),
-    );
+      });
+    }
+    setMarkets(marketRows);
 
     if (candidates.length === 0) {
-      signal.reason = "No live binary markets found for this venue — check VENUE_ID / NETWORK.";
+      signal.reason =
+        "No live binary markets found for this venue — check VENUE_ID / NETWORK.";
       await writeSignal(signal);
-      await writeMeta({ agentRunning: true, lastTickAt: updatedAt });
+      await writeMeta({
+        ...meta,
+        agentRunning: true,
+        lastTickAt: updatedAt,
+      });
       await appendActivity({
         kind: "tick",
         at: updatedAt,
@@ -759,13 +852,23 @@ export async function runAgentTick(): Promise<DeskSignal> {
     let onchain: Record<string, unknown> | null = null;
     let skippedNoSymbol = 0;
 
-    for (const c of candidates) {
+    // Prefer explicit ?market= focus when still Trading.
+    const ordered = [...candidates];
+    if (focusMarketId) {
+      ordered.sort((a, b) => {
+        const af = a.marketId.toLowerCase() === focusMarketId ? 0 : 1;
+        const bf = b.marketId.toLowerCase() === focusMarketId ? 0 : 1;
+        return af - bf;
+      });
+    }
+
+    for (const c of ordered) {
       try {
         const oc = await exchange.client.getMarketOnchain(
           c.marketId as `0x${string}`,
         );
         const status = Number((oc as unknown as { status?: number }).status);
-        if (status !== 1) continue; // only Trading
+        if (status !== 1) continue;
         const { upSymbol } = pickOutcomes(c.m);
         if (!upSymbol && !c.upSymbol) {
           skippedNoSymbol += 1;
@@ -785,7 +888,11 @@ export async function runAgentTick(): Promise<DeskSignal> {
           ? "Trading markets found but none have resolvable Up/Down (#YES/#NO) symbols."
           : "Live markets found but none currently on-chain Trading (status=1).";
       await writeSignal(signal);
-      await writeMeta({ agentRunning: true, lastTickAt: updatedAt });
+      await writeMeta({
+        ...meta,
+        agentRunning: true,
+        lastTickAt: updatedAt,
+      });
       return signal;
     }
 
@@ -818,9 +925,9 @@ export async function runAgentTick(): Promise<DeskSignal> {
       statusCode,
       oracleQuestionId: qid || undefined,
       oracleGraphUrl: oracleGraphUrl(qid),
+      preferredMissing,
     };
 
-    // Book
     let upBid: number | null = null;
     let upAsk: number | null = null;
     try {
@@ -835,72 +942,110 @@ export async function runAgentTick(): Promise<DeskSignal> {
     signal.upAsk = upAsk;
     signal.upMid = mid;
 
-    const spot = await readSpot(exchange, signal.asset);
+    const { spot, source: spotSource } = await readSpotLabeled(
+      exchange,
+      signal.asset,
+    );
+    signal.spotSource = spotSource;
+
+    // Only SDK spot drives edge / recommendations. CoinGecko is display-only.
+    const spotForEdge = spotSource === "sdk" ? spot : null;
     let reference = await readReference(
       exchange,
       chosen.marketId,
       chosen.m,
-      spot,
+      spotForEdge ?? spot,
     );
-    // If no opening reference yet, seed with spot so bias≈0.5 (neutral)
-    if (reference == null && spot != null) reference = spot;
+    if (reference == null && spotForEdge != null) reference = spotForEdge;
 
     signal.spot = spot;
     signal.reference = reference;
 
-    const bias =
-      spot != null && reference != null ? spotImpliedBias(spot, reference) : null;
-    signal.spotImpliedBias = bias;
+    if (spotSource !== "sdk") {
+      signal.spotImpliedBias = null;
+      signal.edge = null;
+      signal.recommendedSide = null;
+      const feedLabel =
+        spotSource === "coingecko"
+          ? "CoinGecko (display only)"
+          : "no SDK spot feed";
+      signal.reason =
+        mid == null
+          ? `${signal.asset} book empty and ${feedLabel} — neutral, no trade signal.`
+          : `${signal.asset} spot from ${feedLabel}; refusing to invent edge for trading. Book mid ${((mid ?? 0) * 100).toFixed(1)}%. Connect SDK price feed for signals.`;
+    } else {
+      const bias =
+        spotForEdge != null && reference != null
+          ? spotImpliedBias(spotForEdge, reference)
+          : null;
+      signal.spotImpliedBias = bias;
+      const { edge } = computeEdge(bias ?? 0.5, mid);
+      signal.edge = edge;
+      const side = decideSide(edge, cfg.edgeThreshold);
+      signal.recommendedSide = side;
+      signal.reason = explainReason({
+        asset: signal.asset,
+        spot: spotForEdge,
+        reference,
+        bias,
+        mid,
+        edge,
+        side,
+        threshold: cfg.edgeThreshold,
+      });
+      if (preferredMissing) {
+        signal.reason += ` (preferred ${cfg.preferredAsset} ${cfg.preferredIntervalSec}s window not live — showing best available)`;
+      }
 
-    const { edge } = computeEdge(bias ?? 0.5, mid);
-    signal.edge = edge;
-    const side = decideSide(edge, cfg.edgeThreshold);
-    signal.recommendedSide = side;
-    signal.reason = explainReason({
-      asset: signal.asset,
-      spot,
-      reference,
-      bias,
-      mid,
-      edge,
-      side,
-      threshold: cfg.edgeThreshold,
-    });
-
-    // Place when edge clears threshold and market is Trading
-    if (side && statusCode === 1 && mid != null) {
-      const tradeSymbol = side === "Up" ? upSymbol : downSymbol || upSymbol;
-      let limit: number;
-      if (side === "Up") {
-        if (upAsk == null) {
-          signal.reason += " (no ask to cross — skipped)";
+      // Server agent is signal-only unless AGENT_TRADE=true and DRY_RUN=false.
+      // Record a dry "would trade" lastTrade for Copy UX without sending orders.
+      if (side && statusCode === 1 && mid != null) {
+        const tradeSymbol = side === "Up" ? upSymbol : downSymbol || upSymbol;
+        let limit: number | null = null;
+        if (side === "Up") {
+          if (upAsk != null) limit = Math.min(0.99, upAsk + 0.02);
+          else signal.reason += " (no ask to cross — skipped)";
         } else {
-          limit = Math.min(0.99, upAsk + 0.02);
-          if (cfg.dryRun) {
-            const trade: LastTrade = {
+          limit =
+            upBid != null
+              ? Math.min(0.99, 1 - upBid + 0.02)
+              : upAsk != null
+                ? Math.min(0.99, 1 - upAsk + 0.02)
+                : null;
+          if (limit == null || !downSymbol) {
+            signal.reason += " (no Down liquidity — skipped)";
+            limit = null;
+          }
+        }
+
+        if (limit != null && tradeSymbol) {
+          if (cfg.dryRun || !cfg.agentTrade) {
+            const tradeAt = new Date().toISOString();
+            signal.lastTrade = {
               marketId: signal.marketId,
-              symbol: tradeSymbol!,
+              symbol: tradeSymbol,
               side,
               size: cfg.copySize,
               price: limit,
               edge: edge ?? 0,
               reason: signal.reason,
               dryRun: true,
-              at: updatedAt,
+              at: tradeAt,
             };
-            signal.lastTrade = trade;
+            tradedThisTick = true;
           } else if (cfg.privateKey) {
             try {
               const res = await placeIoc(
                 exchange,
-                tradeSymbol!,
+                tradeSymbol,
                 side,
                 cfg.copySize,
                 limit,
               );
+              const tradeAt = new Date().toISOString();
               signal.lastTrade = {
                 marketId: signal.marketId,
-                symbol: tradeSymbol!,
+                symbol: tradeSymbol,
                 side,
                 size: cfg.copySize,
                 price: limit,
@@ -908,66 +1053,21 @@ export async function runAgentTick(): Promise<DeskSignal> {
                 reason: signal.reason,
                 txHash: res.txHash,
                 dryRun: false,
-                at: updatedAt,
+                at: tradeAt,
               };
+              tradedThisTick = true;
             } catch (e) {
               signal.error = `Order failed: ${e instanceof Error ? e.message : String(e)}`;
             }
           } else {
-            signal.reason += " (no PRIVATE_KEY — signal only)";
-          }
-        }
-      } else {
-        // Down: buy via down symbol; limit as Down probability
-        const downLimit =
-          upBid != null
-            ? Math.min(0.99, 1 - upBid + 0.02)
-            : upAsk != null
-              ? Math.min(0.99, 1 - upAsk + 0.02)
-              : null;
-        if (downLimit == null || !downSymbol) {
-          signal.reason += " (no Down liquidity — skipped)";
-        } else if (cfg.dryRun) {
-          signal.lastTrade = {
-            marketId: signal.marketId,
-            symbol: downSymbol,
-            side,
-            size: cfg.copySize,
-            price: downLimit,
-            edge: edge ?? 0,
-            reason: signal.reason,
-            dryRun: true,
-            at: updatedAt,
-          };
-        } else if (cfg.privateKey) {
-          try {
-            const res = await placeIoc(
-              exchange,
-              downSymbol,
-              side,
-              cfg.copySize,
-              downLimit,
-            );
-            signal.lastTrade = {
-              marketId: signal.marketId,
-              symbol: downSymbol,
-              side,
-              size: cfg.copySize,
-              price: downLimit,
-              edge: edge ?? 0,
-              reason: signal.reason,
-              txHash: res.txHash,
-              dryRun: false,
-              at: updatedAt,
-            };
-          } catch (e) {
-            signal.error = `Order failed: ${e instanceof Error ? e.message : String(e)}`;
+            signal.reason += " (signal-only — connect wallet to Copy)";
           }
         }
       }
     }
 
     try {
+      // Claimable scan is server-wallet scoped; keep for demo ops when key present.
       const claimable = await scanClaimable(exchange);
       setClaimable(claimable);
     } catch {
@@ -979,6 +1079,7 @@ export async function runAgentTick(): Promise<DeskSignal> {
   }
 
   signal.updatedAt = new Date().toISOString();
+  signal.dryRun = cfg.dryRun;
 
   if (signal.marketId) {
     const existing = getMarkets();
@@ -990,7 +1091,9 @@ export async function runAgentTick(): Promise<DeskSignal> {
       status: signal.status,
       statusCode: signal.statusCode,
       upMid: signal.upMid,
+      midFresh: signal.upMid != null,
       symbol: signal.symbol,
+      upSymbol: signal.upSymbol,
       secondsLeft: signal.expiry
         ? Math.max(0, Math.floor(signal.expiry - Date.now() / 1000))
         : undefined,
@@ -1003,14 +1106,14 @@ export async function runAgentTick(): Promise<DeskSignal> {
 
   await writeSignal(signal);
   await writeMeta({
+    ...meta,
     agentRunning: true,
     lastTickAt: signal.updatedAt,
     lastError: signal.error,
   });
 
-  const tradeJustNow =
-    signal.lastTrade && signal.lastTrade.at === signal.updatedAt;
-  if (tradeJustNow && signal.lastTrade) {
+  // Fix: don't compare lastTrade.at === updatedAt (rewritten later). Use flag.
+  if (tradedThisTick && signal.lastTrade) {
     await appendActivity({
       kind: "trade",
       at: signal.lastTrade.at,

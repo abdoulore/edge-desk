@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
+import { useWalletTrade } from "@/hooks/useWalletTrade";
 import { Badge, Metric, Panel, StateBlock, Toast } from "@/components/ui";
 import {
   fmtCountdown,
@@ -18,10 +19,15 @@ import { explorerTxUrl } from "@/lib/types";
 export default function Desk() {
   const search = useSearchParams();
   const focusMarket = search.get("market");
-  const { status, loading, error, busy, copy, claim, tick } = useDeskStatus({
-    autoTick: true,
+  const { status, loading, error, busy, tick, refresh } = useDeskStatus({
     pollMs: 8000,
   });
+  const {
+    isConnected,
+    busy: tradeBusy,
+    copyFromSignal,
+    claimMarket,
+  } = useWalletTrade();
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
@@ -36,21 +42,36 @@ export default function Desk() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  useEffect(() => {
+    if (!focusMarket) return;
+    void fetch("/api/focus", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ marketId: focusMarket }),
+    }).then(() => refresh());
+  }, [focusMarket, refresh]);
+
   const signal = status?.signal;
+  const claimable = status?.claimable ?? [];
+  const hasClaimable = claimable.length > 0;
+  const actionBusy = busy !== null || tradeBusy !== null;
   const edgeColor = useMemo(() => {
-    if (!signal?.edge) return "text-desk-muted";
+    if (signal?.edge == null) return "text-desk-muted";
     if (Math.abs(signal.edge) >= signal.edgeThreshold) return "text-desk-accent";
     return "text-desk-warn";
   }, [signal]);
 
   async function onCopy() {
-    const res = await copy();
+    const res = await copyFromSignal(signal);
     setToast(res.message);
+    await refresh();
   }
 
   async function onClaim(marketId?: string) {
-    const res = await claim(marketId);
+    const id = marketId || claimable[0]?.marketId;
+    const res = await claimMarket(id);
     setToast(res.message);
+    await refresh();
   }
 
   if (loading && !status) {
@@ -81,16 +102,34 @@ export default function Desk() {
         <button
           type="button"
           onClick={() => void tick()}
-          disabled={busy !== null}
+          disabled={actionBusy}
           className="rounded-lg border border-desk-border bg-desk-panel px-3 py-1.5 text-xs text-desk-muted transition hover:text-white disabled:opacity-50"
         >
-          {busy === "tick" ? "Ticking…" : "Force tick"}
+          {busy === "tick" ? "Ticking…" : "Force signal"}
         </button>
       </div>
 
+      {status?.paused && (
+        <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
+          Agent paused. Resume in Settings.
+        </p>
+      )}
+
+      {status?.agentStalled && !status?.paused && (
+        <p className="rounded-xl border border-desk-down/30 bg-desk-down/5 px-3 py-2 text-xs text-desk-down">
+          Agent not running (stale lastTickAt).
+        </p>
+      )}
+
+      {(status?.preferredMissing || signal?.preferredMissing) && (
+        <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
+          Preferred window missing - showing {fmtInterval(signal?.intervalSec)}.
+        </p>
+      )}
+
       {focusMarket && signal?.marketId && focusMarket.toLowerCase() !== signal.marketId.toLowerCase() && (
         <p className="rounded-xl border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
-          Focused market {focusMarket.slice(0, 12)}… — agent currently tracks a different window.
+          Focus requested {focusMarket.slice(0, 12)}… — waiting for agent to adopt.
         </p>
       )}
 
@@ -115,7 +154,15 @@ export default function Desk() {
             }
             className={edgeColor}
           />
-          <Metric label="Spot" value={fmtNum(signal?.spot, 2)} />
+          <Metric
+            label="Spot"
+            value={fmtNum(signal?.spot, 2)}
+            sub={
+              signal?.spotSource && signal.spotSource !== "sdk"
+                ? signal.spotSource
+                : undefined
+            }
+          />
           <Metric label="Reference" value={fmtNum(signal?.reference, 2)} />
         </div>
 
@@ -137,6 +184,10 @@ export default function Desk() {
           )}
           {signal?.spotImpliedBias != null && (
             <Badge tone="cyan">Fair Up {fmtPct(signal.spotImpliedBias)}</Badge>
+          )}
+          {signal?.spotSource === "sdk" && <Badge tone="cyan">SDK spot</Badge>}
+          {signal?.spotSource === "coingecko" && (
+            <Badge tone="warn">CoinGecko display</Badge>
           )}
         </div>
       </Panel>
@@ -183,18 +234,28 @@ export default function Desk() {
         <button
           type="button"
           onClick={() => void onCopy()}
-          disabled={busy !== null}
+          disabled={actionBusy || !isConnected}
           className="rounded-2xl bg-desk-accent px-4 py-3.5 text-sm font-semibold text-black transition active:scale-[0.98] disabled:opacity-50"
         >
-          {busy === "copy" ? "Copying…" : "Copy last trade"}
+          {tradeBusy === "copy"
+            ? "Copying..."
+            : isConnected
+              ? "Copy last trade"
+              : "Connect to copy"}
         </button>
         <button
           type="button"
           onClick={() => void onClaim()}
-          disabled={busy !== null}
+          disabled={actionBusy || !isConnected || !hasClaimable}
           className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3.5 text-sm font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
         >
-          {busy === "claim" ? "Claiming…" : "Claim"}
+          {tradeBusy === "claim"
+            ? "Claiming..."
+            : !hasClaimable
+              ? "Nothing to claim"
+              : isConnected
+                ? "Claim"
+                : "Connect to claim"}
         </button>
       </section>
 
@@ -217,10 +278,10 @@ export default function Desk() {
         </Link>
       </div>
 
-      {status?.claimable && status.claimable.length > 0 && (
+      {hasClaimable && (
         <Panel title="Claimable">
           <ul className="space-y-2">
-            {status.claimable.map((c) => (
+            {claimable.map((c) => (
               <li
                 key={c.marketId}
                 className="flex items-center justify-between gap-2 text-sm"
@@ -235,7 +296,8 @@ export default function Desk() {
                 </div>
                 <button
                   type="button"
-                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs"
+                  className="rounded-lg bg-white/10 px-3 py-1.5 text-xs disabled:opacity-50"
+                  disabled={actionBusy || !isConnected}
                   onClick={() => void onClaim(c.marketId)}
                 >
                   Claim
@@ -249,8 +311,8 @@ export default function Desk() {
       <footer className="space-y-1 pt-1 text-center text-[11px] text-desk-muted">
         <p>
           Threshold {fmtPct(signal?.edgeThreshold ?? status?.config?.edgeThreshold ?? 0.05, 0)} · size{" "}
-          {signal?.copySize ?? status?.config?.copySize ?? 1} · tick{" "}
-          {busy === "tick" ? "…" : "ok"}
+          {signal?.copySize ?? status?.config?.copySize ?? 1} ·{" "}
+          {status?.agentStalled ? "stalled" : status?.paused ? "paused" : "signal-only"}
         </p>
         <p suppressHydrationWarning>
           Updated {fmtTime(signal?.updatedAt)} · {new Date(now).toLocaleTimeString()}

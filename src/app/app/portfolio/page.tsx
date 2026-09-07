@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useAccount } from "wagmi";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
+import { useWalletTrade } from "@/hooks/useWalletTrade";
 import { Badge, Panel, StateBlock, Toast } from "@/components/ui";
 import {
   fmtDateTime,
@@ -10,13 +12,20 @@ import {
   fmtPct,
   shortHash,
 } from "@/lib/format";
+import { readFocusedBalances } from "@/lib/clientExchange";
 import { explorerTxUrl } from "@/lib/types";
 
 export default function PortfolioPage() {
-  const { status, loading, error, busy, claim } = useDeskStatus({
+  const { status, loading, error, refresh } = useDeskStatus({
     pollMs: 10000,
   });
+  const { address, isConnected } = useAccount();
+  const { busy, claimMarket } = useWalletTrade();
   const [toast, setToast] = useState<string | null>(null);
+  const [balances, setBalances] = useState<{
+    upBalance: string;
+    downBalance: string;
+  } | null>(null);
 
   if (loading && !status) {
     return <StateBlock kind="loading" title="Loading portfolio…" />;
@@ -31,10 +40,27 @@ export default function PortfolioPage() {
   const lastTrade = status?.signal?.lastTrade;
   const signal = status?.signal;
 
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (!isConnected || !address || !signal?.marketId) {
+        setBalances(null);
+        return;
+      }
+      const row = await readFocusedBalances(signal.marketId, address);
+      if (!cancelled) setBalances(row);
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isConnected, signal?.marketId, status?.lastTickAt]);
+
   async function onClaim(id: string) {
-    const res = await claim(id);
+    const res = await claimMarket(id);
     setToast(res.message);
     setTimeout(() => setToast(null), 4000);
+    await refresh();
   }
 
   return (
@@ -96,6 +122,19 @@ export default function PortfolioPage() {
                 </>
               )}
             </p>
+            {isConnected && balances && (
+              <p className="mt-2 font-mono text-xs text-desk-cyan">
+                Your outcomes · Up {balances.upBalance} · Down {balances.downBalance}
+              </p>
+            )}
+            {isConnected && !balances && (
+              <p className="mt-2 text-xs text-desk-muted">Reading outcome balances…</p>
+            )}
+            {!isConnected && (
+              <p className="mt-2 text-xs text-desk-muted">
+                Connect wallet to see outcome balances.
+              </p>
+            )}
           </div>
         ) : (
           <p className="text-sm text-desk-muted">No active market focus.</p>
@@ -136,11 +175,11 @@ export default function PortfolioPage() {
                 </div>
                 <button
                   type="button"
-                  disabled={busy !== null}
+                  disabled={busy !== null || !isConnected}
                   onClick={() => void onClaim(c.marketId)}
                   className="rounded-lg bg-desk-accent px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
                 >
-                  {busy === "claim" ? "…" : "Claim"}
+                  {busy === "claim" ? "…" : isConnected ? "Claim" : "Connect"}
                 </button>
               </li>
             ))}

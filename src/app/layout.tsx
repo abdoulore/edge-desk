@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import WalletProviders from "@/wallet/Providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -19,7 +20,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body className="bg-desk-bg font-sans text-white antialiased">
-        {children}
+        <WalletProviders>{children}</WalletProviders>
       </body>
     </html>
   );

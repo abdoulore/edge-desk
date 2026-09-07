@@ -13,6 +13,7 @@ const SIGNAL_PATH = path.join(DATA_DIR, "lastSignal.json");
 const META_PATH = path.join(DATA_DIR, "meta.json");
 const ACTIVITY_PATH = path.join(DATA_DIR, "activity.json");
 const MARKETS_PATH = path.join(DATA_DIR, "markets.json");
+const CLAIMABLE_PATH = path.join(DATA_DIR, "claimable.json");
 
 const ACTIVITY_LIMIT = 20;
 
@@ -20,6 +21,8 @@ export interface DeskMeta {
   agentRunning: boolean;
   lastTickAt: string | null;
   lastError?: string;
+  paused?: boolean;
+  focusMarketId?: string | null;
 }
 
 async function ensureDir() {
@@ -45,7 +48,12 @@ export async function readMeta(): Promise<DeskMeta> {
     const raw = await fs.readFile(META_PATH, "utf8");
     return JSON.parse(raw) as DeskMeta;
   } catch {
-    return { agentRunning: false, lastTickAt: null };
+    return {
+      agentRunning: false,
+      lastTickAt: null,
+      paused: false,
+      focusMarketId: null,
+    };
   }
 }
 
@@ -54,23 +62,57 @@ export async function writeMeta(meta: DeskMeta): Promise<void> {
   await fs.writeFile(META_PATH, JSON.stringify(meta, null, 2), "utf8");
 }
 
+export async function patchMeta(patch: Partial<DeskMeta>): Promise<DeskMeta> {
+  const cur = await readMeta();
+  const next = { ...cur, ...patch };
+  await writeMeta(next);
+  return next;
+}
+
 export async function updateLastTrade(trade: LastTrade): Promise<DeskSignal | null> {
   const signal = await readSignal();
   if (!signal) return null;
-  const next = { ...signal, lastTrade: trade, updatedAt: new Date().toISOString() };
+  const next = {
+    ...signal,
+    lastTrade: trade,
+    updatedAt: new Date().toISOString(),
+  };
   await writeSignal(next);
   return next;
 }
 
-/** In-memory claimable cache updated by agent tick */
-let claimableCache: ClaimablePosition[] = [];
+/** In-memory claimable cache + disk mirror */
+let claimableCache: ClaimablePosition[] | null = null;
 
 export function setClaimable(rows: ClaimablePosition[]) {
   claimableCache = rows;
+  void persistClaimable(rows);
 }
 
 export function getClaimable(): ClaimablePosition[] {
-  return claimableCache;
+  return claimableCache ?? [];
+}
+
+async function persistClaimable(rows: ClaimablePosition[]) {
+  try {
+    await ensureDir();
+    await fs.writeFile(CLAIMABLE_PATH, JSON.stringify(rows, null, 2), "utf8");
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function readClaimable(): Promise<ClaimablePosition[]> {
+  if (claimableCache !== null) return claimableCache;
+  try {
+    const raw = await fs.readFile(CLAIMABLE_PATH, "utf8");
+    const rows = JSON.parse(raw) as ClaimablePosition[];
+    claimableCache = rows;
+    return rows;
+  } catch {
+    claimableCache = [];
+    return [];
+  }
 }
 
 /** Markets list — memory + disk mirror */
@@ -129,12 +171,12 @@ export async function appendActivity(
     ...event,
     id: event.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   };
-  // Dedupe near-identical tick events within ~2s
   if (
     next.kind === "tick" &&
     list[0]?.kind === "tick" &&
     list[0].marketId === next.marketId &&
-    Math.abs(new Date(list[0].at).getTime() - new Date(next.at).getTime()) < 2000
+    Math.abs(new Date(list[0].at).getTime() - new Date(next.at).getTime()) <
+      2000
   ) {
     list[0] = { ...list[0], ...next, id: list[0].id };
   } else {
@@ -142,6 +184,10 @@ export async function appendActivity(
   }
   activityCache = list.slice(0, ACTIVITY_LIMIT);
   await ensureDir();
-  await fs.writeFile(ACTIVITY_PATH, JSON.stringify(activityCache, null, 2), "utf8");
+  await fs.writeFile(
+    ACTIVITY_PATH,
+    JSON.stringify(activityCache, null, 2),
+    "utf8",
+  );
   return activityCache;
 }
