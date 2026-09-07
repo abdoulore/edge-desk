@@ -29,23 +29,98 @@ function asNum(v: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+type OutcomeLike = { symbol?: string; label?: string; index?: number };
+
 function pickOutcomes(m: Record<string, unknown>): {
   upSymbol?: string;
   downSymbol?: string;
+  marketSymbol?: string;
 } {
-  const outcomes = m.outcomes as Array<{ symbol?: string }> | undefined;
-  if (outcomes && outcomes.length >= 2) {
-    return { upSymbol: outcomes[0]?.symbol, downSymbol: outcomes[1]?.symbol };
+  const info = m.info as
+    | { outcomes?: OutcomeLike[]; symbol?: string }
+    | undefined;
+  const outcomes =
+    (m.outcomes as OutcomeLike[] | undefined) || info?.outcomes || undefined;
+  const marketSymbol =
+    (typeof m.symbol === "string" && m.symbol) ||
+    (typeof info?.symbol === "string" && info.symbol) ||
+    undefined;
+
+  if (!outcomes?.length) return { marketSymbol };
+
+  const norm = (s?: string) => String(s || "").toUpperCase();
+  const byLabel = (...labels: string[]) => {
+    const wanted = labels.map((l) => l.toUpperCase());
+    return (
+      outcomes.find((o) => wanted.includes(norm(o.label)))?.symbol ||
+      outcomes.find((o) =>
+        wanted.some((l) => norm(o.symbol).endsWith(`#${l}`)),
+      )?.symbol
+    );
+  };
+
+  // Unified SDK: Up == YES (index 0), Down == NO (index 1)
+  const upSymbol =
+    byLabel("YES", "UP") ||
+    outcomes.find((o) => o.index === 0)?.symbol ||
+    outcomes[0]?.symbol;
+  const downSymbol =
+    byLabel("NO", "DOWN") ||
+    outcomes.find((o) => o.index === 1)?.symbol ||
+    outcomes[1]?.symbol;
+
+  return { upSymbol, downSymbol, marketSymbol };
+}
+
+type OutcomeEntry = {
+  marketSymbol: string;
+  upSymbol: string;
+  downSymbol?: string;
+  row?: Record<string, unknown>;
+};
+
+/** listLiveBinaryMarkets rows have yesTokenId/noTokenId but no tradable symbols.
+ *  loadMarkets() builds BTC-…/tUSDC#YES · #NO — index those by marketId. */
+async function loadOutcomeIndex(
+  exchange: ReturnType<typeof getExchange>,
+): Promise<Map<string, OutcomeEntry>> {
+  const byMarketId = new Map<string, OutcomeEntry>();
+  try {
+    const map = await exchange.loadMarkets(true);
+    for (const m of Object.values(map) as Record<string, unknown>[]) {
+      const info = m.info as Record<string, unknown> | undefined;
+      const marketId = String(info?.marketId || m.id || "").toLowerCase();
+      if (!marketId) continue;
+      const picked = pickOutcomes(m);
+      if (!picked.upSymbol) continue;
+      byMarketId.set(marketId, {
+        marketSymbol: picked.marketSymbol || String(m.symbol || ""),
+        upSymbol: picked.upSymbol,
+        downSymbol: picked.downSymbol,
+        row: m,
+      });
+    }
+  } catch {
+    /* non-fatal — callers skip markets without symbols */
   }
-  // loadMarkets-shaped
-  const info = m.info as { outcomes?: Array<{ symbol?: string }> } | undefined;
-  if (info?.outcomes && info.outcomes.length >= 2) {
-    return {
-      upSymbol: info.outcomes[0]?.symbol,
-      downSymbol: info.outcomes[1]?.symbol,
-    };
-  }
-  return {};
+  return byMarketId;
+}
+
+function attachOutcomes(
+  m: Record<string, unknown>,
+  entry: OutcomeEntry | undefined,
+): Record<string, unknown> {
+  if (!entry?.upSymbol) return m;
+  return {
+    ...m,
+    symbol: entry.marketSymbol || m.symbol,
+    outcomes: [
+      { symbol: entry.upSymbol, label: "YES", index: 0 },
+      ...(entry.downSymbol
+        ? [{ symbol: entry.downSymbol, label: "NO", index: 1 }]
+        : []),
+    ],
+  };
 }
 
 async function loadCandidateMarkets(exchange: ReturnType<typeof getExchange>) {
@@ -92,17 +167,62 @@ async function loadCandidateMarkets(exchange: ReturnType<typeof getExchange>) {
     }
   }
 
+  // Enrich live indexer rows with #YES/#NO tradable symbols from loadMarkets.
+  const outcomeIndex = await loadOutcomeIndex(exchange);
+
+  // Prefer BTC 15m: if listLive missed a still-Trading preferred market that
+  // loadMarkets knows about, admit only that preferred asset/interval slice.
+  if (outcomeIndex.size > 0) {
+    const seen = new Set(
+      rows.map((r) => String(r.marketId || "").toLowerCase()).filter(Boolean),
+    );
+    for (const [marketId, entry] of outcomeIndex) {
+      if (seen.has(marketId) || !entry.row) continue;
+      const info = (entry.row.info as Record<string, unknown> | undefined) || {};
+      const status = String(info.status || "").toLowerCase();
+      if (status && status !== "trading") continue;
+      const asset = String(info.asset || "").toUpperCase();
+      const intervalSec = asNum(info.intervalSec) ?? 0;
+      if (asset !== cfg.preferredAsset) continue;
+      if (intervalSec !== cfg.preferredIntervalSec) continue;
+      rows.push({
+        ...info,
+        symbol: entry.row.symbol ?? entry.marketSymbol,
+        outcomes: entry.row.outcomes,
+        marketId: info.marketId || marketId,
+      });
+      seen.add(marketId);
+    }
+  }
+
   const now = Date.now() / 1000;
   const scored = rows
     .map((m) => {
-      const asset = String(m.asset || m.underlying || "").toUpperCase();
-      const intervalSec = asNum(m.intervalSec) ?? 0;
-      const expiry = asNum(m.expiry) ?? 0;
       const marketId = String(m.marketId || "");
+      const enriched = attachOutcomes(
+        m,
+        outcomeIndex.get(marketId.toLowerCase()),
+      );
+      const asset = String(
+        enriched.asset || enriched.underlying || "",
+      ).toUpperCase();
+      const intervalSec = asNum(enriched.intervalSec) ?? 0;
+      const expiry = asNum(enriched.expiry) ?? 0;
       const secondsLeft = expiry - now;
-      return { m, asset, intervalSec, expiry, marketId, secondsLeft };
+      const { upSymbol, downSymbol } = pickOutcomes(enriched);
+      return {
+        m: enriched,
+        asset,
+        intervalSec,
+        expiry,
+        marketId,
+        secondsLeft,
+        upSymbol,
+        downSymbol,
+      };
     })
-    .filter((x) => x.marketId && x.secondsLeft > 60);
+    // Prefer BTC 15m when present; always require a tradeable Up (#YES) symbol.
+    .filter((x) => x.marketId && x.secondsLeft > 60 && Boolean(x.upSymbol));
 
   scored.sort((a, b) => {
     const prefA =
@@ -507,6 +627,7 @@ export async function runAgentTick(): Promise<DeskSignal> {
 
     let chosen: (typeof candidates)[number] | null = null;
     let onchain: Record<string, unknown> | null = null;
+    let skippedNoSymbol = 0;
 
     for (const c of candidates) {
       try {
@@ -515,6 +636,11 @@ export async function runAgentTick(): Promise<DeskSignal> {
         );
         const status = Number((oc as unknown as { status?: number }).status);
         if (status !== 1) continue; // only Trading
+        const { upSymbol } = pickOutcomes(c.m);
+        if (!upSymbol && !c.upSymbol) {
+          skippedNoSymbol += 1;
+          continue;
+        }
         chosen = c;
         onchain = oc as unknown as Record<string, unknown>;
         break;
@@ -524,13 +650,18 @@ export async function runAgentTick(): Promise<DeskSignal> {
     }
 
     if (!chosen || !onchain) {
-      signal.reason = "Live markets found but none currently on-chain Trading (status=1).";
+      signal.reason =
+        skippedNoSymbol > 0
+          ? "Trading markets found but none have resolvable Up/Down (#YES/#NO) symbols."
+          : "Live markets found but none currently on-chain Trading (status=1).";
       await writeSignal(signal);
       await writeMeta({ agentRunning: true, lastTickAt: updatedAt });
       return signal;
     }
 
-    const { upSymbol, downSymbol } = pickOutcomes(chosen.m);
+    const picked = pickOutcomes(chosen.m);
+    const upSymbol = picked.upSymbol || chosen.upSymbol;
+    const downSymbol = picked.downSymbol || chosen.downSymbol;
     if (!upSymbol) {
       signal.reason = "Selected market has no Up outcome symbol.";
       signal.marketId = chosen.marketId;
@@ -546,7 +677,7 @@ export async function runAgentTick(): Promise<DeskSignal> {
     signal = {
       ...signal,
       marketId: chosen.marketId,
-      symbol: String(chosen.m.symbol || upSymbol),
+      symbol: String(picked.marketSymbol || chosen.m.symbol || upSymbol),
       upSymbol,
       downSymbol: downSymbol || "",
       asset: chosen.asset || cfg.preferredAsset,
