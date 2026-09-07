@@ -23,6 +23,7 @@ import { readFocusedBalances } from "@/lib/clientExchange";
 import { explorerTxUrl } from "@/lib/types";
 
 export default function PortfolioPage() {
+  // All hooks must run unconditionally on every render (React #310).
   const { status, loading, error, refresh } = useDeskStatus({
     pollMs: 10000,
   });
@@ -34,32 +35,37 @@ export default function PortfolioPage() {
     downBalance: string;
   } | null>(null);
 
-  const claimable = status?.claimable ?? [];
-  const lastTrade = status?.signal?.lastTrade;
-  const signal = status?.signal;
+  const marketId = status?.signal?.marketId;
+  const lastTickAt = status?.lastTickAt;
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      if (!isConnected || !address || !signal?.marketId) {
+      if (!isConnected || !address || !marketId) {
         setBalances(null);
         return;
       }
-      const row = await readFocusedBalances(signal.marketId, address);
+      const row = await readFocusedBalances(marketId, address);
       if (!cancelled) setBalances(row);
     }
     void load();
     return () => {
       cancelled = true;
     };
-  }, [address, isConnected, signal?.marketId, status?.lastTickAt]);
+  }, [address, isConnected, marketId, lastTickAt]);
 
-  if (loading && !status) {
+  const claimable = status?.claimable ?? [];
+  const lastTrade = status?.signal?.lastTrade;
+  const signal = status?.signal;
+  const showLoading = loading && !status;
+  const showError = Boolean(error && !status);
+
+  if (showLoading) {
     return <StateBlock kind="loading" title="Loading portfolio..." />;
   }
-  if (error && !status) {
+  if (showError) {
     return (
-      <StateBlock kind="error" title="Portfolio unavailable" detail={error} />
+      <StateBlock kind="error" title="Portfolio unavailable" detail={error ?? undefined} />
     );
   }
 
