@@ -8,3 +8,7 @@
 /data/*.json
 !/data/.gitkeep
 *.tsbuildinfo
+
+# Internal (keep local only)
+DEMO.md
+FEEDBACK.md
