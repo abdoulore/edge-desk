@@ -1,0 +1,219 @@
+"use client";
+
+import { useState } from "react";
+import { useDeskStatus } from "@/hooks/useDeskStatus";
+import { Badge, Panel, StateBlock, Toast } from "@/components/ui";
+import {
+  fmtDateTime,
+  fmtInterval,
+  fmtNum,
+  fmtPct,
+  shortHash,
+} from "@/lib/format";
+import { explorerTxUrl } from "@/lib/types";
+
+export default function PortfolioPage() {
+  const { status, loading, error, busy, claim } = useDeskStatus({
+    pollMs: 10000,
+  });
+  const [toast, setToast] = useState<string | null>(null);
+
+  if (loading && !status) {
+    return <StateBlock kind="loading" title="Loading portfolio…" />;
+  }
+  if (error && !status) {
+    return (
+      <StateBlock kind="error" title="Portfolio unavailable" detail={error} />
+    );
+  }
+
+  const claimable = status?.claimable ?? [];
+  const lastTrade = status?.signal?.lastTrade;
+  const signal = status?.signal;
+
+  async function onClaim(id: string) {
+    const res = await claim(id);
+    setToast(res.message);
+    setTimeout(() => setToast(null), 4000);
+  }
+
+  return (
+    <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
+      <div>
+        <p className="text-[11px] uppercase tracking-[0.2em] text-desk-muted">
+          Portfolio
+        </p>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Positions & claims
+        </h1>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <MiniStat label="Focused" value={signal?.asset || "—"} />
+        <MiniStat
+          label="Claimable"
+          value={String(claimable.length)}
+          accent={claimable.length > 0}
+        />
+        <MiniStat
+          label="Last side"
+          value={lastTrade?.side || "—"}
+          tone={
+            lastTrade?.side === "Up"
+              ? "text-desk-accent"
+              : lastTrade?.side === "Down"
+                ? "text-desk-down"
+                : ""
+          }
+        />
+      </div>
+
+      <Panel title="Open focus">
+        {signal?.marketId ? (
+          <div className="space-y-2 text-sm">
+            <p>
+              <span className="text-desk-muted">Market · </span>
+              {signal.asset} {fmtInterval(signal.intervalSec)} · {signal.status}
+            </p>
+            <p className="font-mono text-xs text-desk-muted break-all">
+              {signal.marketId}
+            </p>
+            <p>
+              <span className="text-desk-muted">Edge · </span>
+              <span className="font-mono">
+                {signal.edge == null
+                  ? "—"
+                  : `${signal.edge >= 0 ? "+" : ""}${fmtPct(signal.edge)}`}
+              </span>
+              {signal.recommendedSide && (
+                <>
+                  {" "}
+                  <Badge
+                    tone={signal.recommendedSide === "Up" ? "up" : "down"}
+                  >
+                    {signal.recommendedSide}
+                  </Badge>
+                </>
+              )}
+            </p>
+          </div>
+        ) : (
+          <p className="text-sm text-desk-muted">No active market focus.</p>
+        )}
+      </Panel>
+
+      <Panel title="Claimable">
+        {claimable.length === 0 ? (
+          <StateBlock
+            kind="empty"
+            title="Nothing claimable"
+            detail="Resolved/voided balances with outcome tokens will show here after ticks."
+          />
+        ) : (
+          <ul className="space-y-3">
+            {claimable.map((c) => (
+              <li
+                key={c.marketId}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-desk-border/70 bg-black/20 px-3 py-3"
+              >
+                <div>
+                  <p className="font-medium">
+                    {c.asset} · {c.status}
+                  </p>
+                  <p className="mt-0.5 font-mono text-[11px] text-desk-muted">
+                    Up {c.upBalance} · Down {c.downBalance}
+                  </p>
+                  {c.oracleGraphUrl && (
+                    <a
+                      href={c.oracleGraphUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-xs text-desk-cyan hover:underline"
+                    >
+                      Oracle graph ↗
+                    </a>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => void onClaim(c.marketId)}
+                  className="rounded-lg bg-desk-accent px-3 py-1.5 text-xs font-semibold text-black disabled:opacity-50"
+                >
+                  {busy === "claim" ? "…" : "Claim"}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title="Last trade">
+        {!lastTrade ? (
+          <StateBlock
+            kind="empty"
+            title="No trades yet"
+            detail="Agent fills and copy trades appear here."
+          />
+        ) : (
+          <div className="space-y-2 text-sm">
+            <p className="text-lg font-semibold">
+              <span
+                className={
+                  lastTrade.side === "Up" ? "text-desk-accent" : "text-desk-down"
+                }
+              >
+                {lastTrade.side}
+              </span>{" "}
+              · {lastTrade.size} @ {fmtNum(lastTrade.price, 3)}
+            </p>
+            <p className="text-desk-muted">
+              {fmtDateTime(lastTrade.at)} · edge {fmtPct(lastTrade.edge)}
+              {lastTrade.dryRun ? " · dry-run" : ""}
+            </p>
+            <p className="leading-relaxed text-zinc-300">{lastTrade.reason}</p>
+            {lastTrade.txHash && (
+              <a
+                href={explorerTxUrl(lastTrade.txHash)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block font-mono text-xs text-desk-cyan hover:underline"
+              >
+                {shortHash(lastTrade.txHash)} ↗
+              </a>
+            )}
+          </div>
+        )}
+      </Panel>
+
+      {toast && <Toast message={toast} />}
+    </div>
+  );
+}
+
+function MiniStat({
+  label,
+  value,
+  accent,
+  tone = "",
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  tone?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-desk-border bg-desk-panel px-4 py-3">
+      <p className="text-[11px] uppercase tracking-wider text-desk-muted">
+        {label}
+      </p>
+      <p
+        className={`mt-1 font-mono text-xl font-semibold ${
+          accent ? "text-desk-accent" : ""
+        } ${tone}`}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}

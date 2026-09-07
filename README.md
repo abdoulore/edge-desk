@@ -1,6 +1,6 @@
 # Edge Desk
 
-Explainable rule-based trading agent + one-screen mobile-first UI for **DreamDEX binary Event Contracts** (Up/Down on BTC/ETH short windows) on **Somnia Shannon testnet** (chain 50312).
+Explainable rule-based trading agent + product site (landing + multi-page app) for **DreamDEX binary Event Contracts** (Up/Down on BTC/ETH short windows) on **Somnia Shannon testnet** (chain 50312).
 
 Built for the **Somnia x DreamDEX Event Contracts** hackathon. No LLM — every trade comes with a one-sentence plain-English reason.
 
@@ -12,7 +12,7 @@ Event Contract books quote Up as a probability in (0, 1). Spot often moves befor
 
 - Agent (`src/agent/tick.ts`): load live binary markets, gate onchain.status === 1, book + spot/reference, edge, IOC when edged, persist data/lastSignal.json.
 - APIs: GET /api/status, POST /api/copy, POST /api/claim, POST /api/agent/tick.
-- UI: single dark mobile page; client polls tick every ~8s.
+- UI: marketing landing + app shell (Desk / Markets / Portfolio / Activity / Settings); desk polls tick every ~8s.
 - DRY_RUN defaults true. Key by marketId/symbol — never pool address.
 
 ## Edge formula
@@ -43,7 +43,7 @@ npm run build
 npm run dev
 ```
 
-Open http://localhost:3000
+Open http://localhost:3000 (landing) or http://localhost:3000/app/desk
 
 Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 

@@ -4,13 +4,12 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Edge Desk — DreamDEX Event Contracts",
   description:
-    "Explainable rule-based trading desk for DreamDEX binary Event Contracts on Somnia.",
+    "Explainable rule-based trading desk for DreamDEX binary Event Contracts on Somnia Shannon.",
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
   themeColor: "#0b0f14",
 };
 
@@ -19,7 +18,9 @@ export default function RootLayout({
 }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html lang="en">
-      <body className="bg-desk-bg text-white antialiased">{children}</body>
+      <body className="bg-desk-bg font-sans text-white antialiased">
+        {children}
+      </body>
     </html>
   );
 }

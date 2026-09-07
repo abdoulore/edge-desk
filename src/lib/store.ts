@@ -1,10 +1,20 @@
 import { promises as fs } from "fs";
 import path from "path";
-import type { ClaimablePosition, DeskSignal, LastTrade } from "./types";
+import type {
+  ActivityEvent,
+  ClaimablePosition,
+  DeskSignal,
+  LastTrade,
+  MarketSummary,
+} from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const SIGNAL_PATH = path.join(DATA_DIR, "lastSignal.json");
 const META_PATH = path.join(DATA_DIR, "meta.json");
+const ACTIVITY_PATH = path.join(DATA_DIR, "activity.json");
+const MARKETS_PATH = path.join(DATA_DIR, "markets.json");
+
+const ACTIVITY_LIMIT = 20;
 
 export interface DeskMeta {
   agentRunning: boolean;
@@ -61,4 +71,77 @@ export function setClaimable(rows: ClaimablePosition[]) {
 
 export function getClaimable(): ClaimablePosition[] {
   return claimableCache;
+}
+
+/** Markets list — memory + disk mirror */
+let marketsCache: MarketSummary[] = [];
+
+export function setMarkets(rows: MarketSummary[]) {
+  marketsCache = rows;
+  void persistMarkets(rows);
+}
+
+export function getMarkets(): MarketSummary[] {
+  return marketsCache;
+}
+
+async function persistMarkets(rows: MarketSummary[]) {
+  try {
+    await ensureDir();
+    await fs.writeFile(MARKETS_PATH, JSON.stringify(rows, null, 2), "utf8");
+  } catch {
+    /* ignore */
+  }
+}
+
+export async function readMarkets(): Promise<MarketSummary[]> {
+  if (marketsCache.length > 0) return marketsCache;
+  try {
+    const raw = await fs.readFile(MARKETS_PATH, "utf8");
+    const rows = JSON.parse(raw) as MarketSummary[];
+    marketsCache = rows;
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+/** Activity ring buffer — last N events */
+let activityCache: ActivityEvent[] | null = null;
+
+export async function readActivity(): Promise<ActivityEvent[]> {
+  if (activityCache) return activityCache;
+  try {
+    const raw = await fs.readFile(ACTIVITY_PATH, "utf8");
+    activityCache = JSON.parse(raw) as ActivityEvent[];
+    return activityCache;
+  } catch {
+    activityCache = [];
+    return activityCache;
+  }
+}
+
+export async function appendActivity(
+  event: Omit<ActivityEvent, "id"> & { id?: string },
+): Promise<ActivityEvent[]> {
+  const list = await readActivity();
+  const next: ActivityEvent = {
+    ...event,
+    id: event.id || `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  };
+  // Dedupe near-identical tick events within ~2s
+  if (
+    next.kind === "tick" &&
+    list[0]?.kind === "tick" &&
+    list[0].marketId === next.marketId &&
+    Math.abs(new Date(list[0].at).getTime() - new Date(next.at).getTime()) < 2000
+  ) {
+    list[0] = { ...list[0], ...next, id: list[0].id };
+  } else {
+    list.unshift(next);
+  }
+  activityCache = list.slice(0, ACTIVITY_LIMIT);
+  await ensureDir();
+  await fs.writeFile(ACTIVITY_PATH, JSON.stringify(activityCache, null, 2), "utf8");
+  return activityCache;
 }

@@ -9,9 +9,12 @@ import {
 } from "@/lib/edge";
 import { getExchange, oracleGraphUrl, statusLabel } from "@/lib/exchange";
 import {
+  appendActivity,
   getClaimable,
+  getMarkets,
   readSignal,
   setClaimable,
+  setMarkets,
   writeMeta,
   writeSignal,
 } from "@/lib/store";
@@ -19,6 +22,7 @@ import type {
   ClaimablePosition,
   DeskSignal,
   LastTrade,
+  MarketSummary,
   Side,
 } from "@/lib/types";
 
@@ -574,6 +578,14 @@ export async function claimMarket(marketId: string): Promise<{
     }
     if (res.receipt?.transactionHash) txs.push(res.receipt.transactionHash);
   }
+  await appendActivity({
+    kind: "claim",
+    at: new Date().toISOString(),
+    title: `Claimed ${toClaim.length} outcome(s)`,
+    detail: txs.length ? `txs: ${txs.join(", ")}` : undefined,
+    marketId,
+    txHash: txs[0],
+  });
   return { ok: true, txs, message: `Redeemed ${toClaim.length} outcome(s)` };
 }
 
@@ -627,6 +639,17 @@ export async function copyLastTrade(): Promise<{
       at: new Date().toISOString(),
     };
     await writeSignal({ ...signal, lastTrade: trade, updatedAt: trade.at });
+    await appendActivity({
+      kind: "copy",
+      at: trade.at,
+      title: `Copy ${trade.side} (dry)`,
+      detail: trade.reason,
+      marketId: trade.marketId,
+      asset: signal.asset,
+      side: trade.side,
+      edge: trade.edge,
+      dryRun: true,
+    });
     return { ok: true, message: "DRY_RUN copy recorded", trade };
   }
 
@@ -657,6 +680,18 @@ export async function copyLastTrade(): Promise<{
     at: new Date().toISOString(),
   };
   await writeSignal({ ...signal, lastTrade: trade, updatedAt: trade.at });
+  await appendActivity({
+    kind: "copy",
+    at: trade.at,
+    title: `Copy ${trade.side}`,
+    detail: trade.reason,
+    marketId: trade.marketId,
+    asset: signal.asset,
+    side: trade.side,
+    edge: trade.edge,
+    txHash: trade.txHash,
+    dryRun: false,
+  });
   return { ok: true, message: "Copy order sent", trade };
 }
 
@@ -693,10 +728,30 @@ export async function runAgentTick(): Promise<DeskSignal> {
 
   try {
     const candidates = await loadCandidateMarkets(exchange);
+    setMarkets(
+      candidates.slice(0, 24).map((c): MarketSummary => ({
+        marketId: c.marketId,
+        asset: c.asset || cfg.preferredAsset,
+        intervalSec: c.intervalSec,
+        expiry: c.expiry,
+        status: "Trading",
+        statusCode: 1,
+        upMid: null,
+        symbol: String(c.m.symbol || ""),
+        secondsLeft: Math.max(0, Math.floor(c.secondsLeft)),
+      })),
+    );
+
     if (candidates.length === 0) {
       signal.reason = "No live binary markets found for this venue — check VENUE_ID / NETWORK.";
       await writeSignal(signal);
       await writeMeta({ agentRunning: true, lastTickAt: updatedAt });
+      await appendActivity({
+        kind: "tick",
+        at: updatedAt,
+        title: "No live markets",
+        detail: signal.reason,
+      });
       return signal;
     }
 
@@ -924,12 +979,74 @@ export async function runAgentTick(): Promise<DeskSignal> {
   }
 
   signal.updatedAt = new Date().toISOString();
+
+  if (signal.marketId) {
+    const existing = getMarkets();
+    const row: MarketSummary = {
+      marketId: signal.marketId,
+      asset: signal.asset,
+      intervalSec: signal.intervalSec,
+      expiry: signal.expiry,
+      status: signal.status,
+      statusCode: signal.statusCode,
+      upMid: signal.upMid,
+      symbol: signal.symbol,
+      secondsLeft: signal.expiry
+        ? Math.max(0, Math.floor(signal.expiry - Date.now() / 1000))
+        : undefined,
+    };
+    const others = existing.filter(
+      (m) => m.marketId.toLowerCase() !== signal.marketId.toLowerCase(),
+    );
+    setMarkets([row, ...others].slice(0, 24));
+  }
+
   await writeSignal(signal);
   await writeMeta({
     agentRunning: true,
     lastTickAt: signal.updatedAt,
     lastError: signal.error,
   });
+
+  const tradeJustNow =
+    signal.lastTrade && signal.lastTrade.at === signal.updatedAt;
+  if (tradeJustNow && signal.lastTrade) {
+    await appendActivity({
+      kind: "trade",
+      at: signal.lastTrade.at,
+      title: `${signal.lastTrade.side} fill${signal.lastTrade.dryRun ? " (dry)" : ""}`,
+      detail: signal.lastTrade.reason,
+      marketId: signal.lastTrade.marketId,
+      asset: signal.asset,
+      side: signal.lastTrade.side,
+      edge: signal.lastTrade.edge,
+      txHash: signal.lastTrade.txHash,
+      dryRun: signal.lastTrade.dryRun,
+    });
+  } else if (signal.error) {
+    await appendActivity({
+      kind: "error",
+      at: signal.updatedAt,
+      title: "Tick error",
+      detail: signal.error,
+      marketId: signal.marketId || undefined,
+      asset: signal.asset,
+    });
+  } else {
+    await appendActivity({
+      kind: "tick",
+      at: signal.updatedAt,
+      title: signal.recommendedSide
+        ? `Signal ${signal.recommendedSide}`
+        : `${signal.asset || "Market"} scan`,
+      detail: signal.reason,
+      marketId: signal.marketId || undefined,
+      asset: signal.asset,
+      side: signal.recommendedSide ?? undefined,
+      edge: signal.edge,
+    });
+  }
+
   return signal;
 }
 

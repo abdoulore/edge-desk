@@ -4,6 +4,8 @@
 
 :root {
   color-scheme: dark;
+  --font-geist: "Segoe UI", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-geist-mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
 }
 
 html,
@@ -15,8 +17,9 @@ body {
 }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  font-family: var(--font-geist);
   -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.011em;
 }
 
 * {
@@ -24,10 +27,38 @@ body {
 }
 
 @keyframes pulse-dot {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 
 .live-dot {
   animation: pulse-dot 1.4s ease-in-out infinite;
+}
+
+.landing-grid {
+  background-image:
+    linear-gradient(rgba(62, 207, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(62, 207, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, black, transparent);
+}
+
+.landing-root {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% -10%, rgba(61, 214, 140, 0.08), transparent),
+    #0b0f14;
+}
+
+::selection {
+  background: rgba(61, 214, 140, 0.35);
+  color: #fff;
+}
+
+a {
+  text-underline-offset: 3px;
 }
