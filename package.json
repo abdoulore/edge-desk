@@ -9,7 +9,8 @@
     "lint": "next lint",
     "agent": "tsx scripts/agent-loop.ts",
     "verify": "tsx scripts/verify-stage1-p0.ts && tsx scripts/verify-stage2.ts && tsx scripts/verify-stage3.ts",
-    "verify:stage3": "tsx scripts/verify-stage3.ts"
+    "verify:stage3": "tsx scripts/verify-stage3.ts",
+    "start:all": "bash scripts/start-all.sh"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -20,7 +21,8 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "viem": "^2.33.0",
-    "wagmi": "^2.19.5"
+    "wagmi": "^2.19.5",
+    "tsx": "^4.20.3"
   },
   "devDependencies": {
     "@types/node": "^22.17.0",
@@ -31,7 +33,6 @@
     "eslint-config-next": "^15.5.2",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.17",
-    "tsx": "^4.20.3",
     "typescript": "^5.9.2"
   }
 }

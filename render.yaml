@@ -1,0 +1,40 @@
+# Render Blueprint - persistent disk required for data JSON store.
+# Configure secrets in the Render dashboard from .env.example.
+# Keep AGENT_TRADE false unless you intentionally want server-side IOC.
+services:
+  - type: web
+    name: edge-desk
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start:all
+    healthCheckPath: /
+    disk:
+      name: edge-desk-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NETWORK
+        value: testnet
+      - key: DRY_RUN
+        value: "true"
+      - key: AGENT_TRADE
+        value: "false"
+      - key: EDGE_THRESHOLD
+        value: "0.05"
+      - key: COPY_SIZE
+        value: "1"
+      - key: PREFERRED_ASSET
+        value: BTC
+      - key: PREFERRED_INTERVAL_SEC
+        value: "900"
+      - key: AGENT_INTERVAL_MS
+        value: "8000"
+      - key: EDGE_DESK_SECRET
+        sync: false
+      - key: NEXT_PUBLIC_EDGE_DESK_SECRET
+        sync: false
+      - key: PRIVATE_KEY
+        sync: false

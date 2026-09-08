@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+.env
+.env*.local
+data/*.json
+!data/.gitkeep
+demo
+FEEDBACK.md
+DEMO.md
