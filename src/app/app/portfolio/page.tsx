@@ -19,8 +19,15 @@ import {
   fmtPct,
   shortHash,
 } from "@/lib/format";
-import { readFocusedBalances } from "@/lib/clientExchange";
-import { explorerTxUrl } from "@/lib/types";
+import {
+  fetchWalletPortfolio,
+  readFocusedBalances,
+} from "@/lib/clientExchange";
+import {
+  readWalletExecution,
+  type WalletExecution,
+} from "@/lib/walletExecution";
+import { explorerTxUrl, type ClaimablePosition, type WalletOpenPosition } from "@/lib/types";
 
 export default function PortfolioPage() {
   // All hooks must run unconditionally on every render (React #310).
@@ -28,19 +35,28 @@ export default function PortfolioPage() {
     pollMs: 10000,
   });
   const { address, isConnected } = useAccount();
-  const { busy, claimMarket } = useWalletTrade();
+  const { busy, claimMarket, lastExecution } = useWalletTrade();
   const [toast, setToast] = useState<string | null>(null);
   const [balances, setBalances] = useState<{
     upBalance: string;
     downBalance: string;
   } | null>(null);
+  const [openPositions, setOpenPositions] = useState<WalletOpenPosition[]>([]);
+  const [claimable, setClaimable] = useState<ClaimablePosition[]>([]);
+  const [portfolioLoading, setPortfolioLoading] = useState(false);
+  const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  const [storedExec, setStoredExec] = useState<WalletExecution | null>(null);
 
   const marketId = status?.signal?.marketId;
   const lastTickAt = status?.lastTickAt;
 
   useEffect(() => {
+    setStoredExec(readWalletExecution());
+  }, [lastExecution, lastTickAt]);
+
+  useEffect(() => {
     let cancelled = false;
-    async function load() {
+    async function loadFocus() {
       if (!isConnected || !address || !marketId) {
         setBalances(null);
         return;
@@ -48,15 +64,44 @@ export default function PortfolioPage() {
       const row = await readFocusedBalances(marketId, address);
       if (!cancelled) setBalances(row);
     }
-    void load();
+    void loadFocus();
     return () => {
       cancelled = true;
     };
   }, [address, isConnected, marketId, lastTickAt]);
 
-  const claimable = status?.claimable ?? [];
+  useEffect(() => {
+    let cancelled = false;
+    async function loadPortfolio() {
+      if (!isConnected || !address) {
+        setOpenPositions([]);
+        setClaimable([]);
+        setPortfolioError(null);
+        return;
+      }
+      setPortfolioLoading(true);
+      setPortfolioError(null);
+      const view = await fetchWalletPortfolio(address);
+      if (cancelled) return;
+      if (!view) {
+        setOpenPositions([]);
+        setClaimable([]);
+        setPortfolioError("Could not load wallet portfolio from indexer");
+      } else {
+        setOpenPositions(view.openPositions);
+        setClaimable(view.claimable);
+      }
+      setPortfolioLoading(false);
+    }
+    void loadPortfolio();
+    return () => {
+      cancelled = true;
+    };
+  }, [address, isConnected, lastTickAt, lastExecution]);
+
   const lastTrade = status?.signal?.lastTrade;
   const signal = status?.signal;
+  const walletExec = lastExecution || storedExec;
   const showLoading = loading && !status;
   const showError = Boolean(error && !status);
 
@@ -74,7 +119,16 @@ export default function PortfolioPage() {
     setToast(res.message);
     setTimeout(() => setToast(null), 4000);
     await refresh();
+    if (address) {
+      const view = await fetchWalletPortfolio(address);
+      if (view) {
+        setOpenPositions(view.openPositions);
+        setClaimable(view.claimable);
+      }
+    }
   }
+
+  const openNonClaim = openPositions.filter((p) => !p.claimable);
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
@@ -88,17 +142,18 @@ export default function PortfolioPage() {
           accent={claimable.length > 0}
         />
         <MiniStat
-          label="Last side"
-          value={lastTrade?.side || "-"}
-          tone={
-            lastTrade?.side === "Up"
-              ? "text-desk-accent"
-              : lastTrade?.side === "Down"
-                ? "text-desk-down"
-                : ""
-          }
+          label="Open holdings"
+          value={isConnected ? String(openNonClaim.length) : "-"}
         />
       </div>
+
+      {!isConnected && (
+        <StateBlock
+          kind="empty"
+          title="Connect wallet"
+          detail="Portfolio and claimables are scoped to your connected Shannon address — not the optional server wallet."
+        />
+      )}
 
       <Panel title="Open focus">
         {signal?.marketId ? (
@@ -150,12 +205,58 @@ export default function PortfolioPage() {
         )}
       </Panel>
 
-      <Panel title="Claimable">
-        {claimable.length === 0 ? (
+      <Panel title="Your open positions">
+        {!isConnected ? (
+          <p className="text-sm text-desk-muted">Connect to list holdings across markets.</p>
+        ) : portfolioLoading && openPositions.length === 0 ? (
+          <StateBlock kind="loading" title="Loading positions..." />
+        ) : portfolioError && openPositions.length === 0 ? (
+          <StateBlock kind="error" title="Portfolio read failed" detail={portfolioError} />
+        ) : openNonClaim.length === 0 ? (
+          <StateBlock
+            kind="empty"
+            title="No open holdings"
+            detail="Non-zero outcome balances from the SDK portfolio API appear here (all markets, not only focus)."
+          />
+        ) : (
+          <ul className="space-y-2">
+            {openNonClaim.map((p) => (
+              <li
+                key={`${p.marketId}-${p.outcomeIndex}`}
+                className="rounded-desk border border-desk-border/70 bg-black/20 px-3 py-3 text-sm"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium">
+                    {p.asset} {fmtInterval(p.intervalSec)} ·{" "}
+                    <span
+                      className={
+                        p.side === "Up" ? "text-desk-accent" : "text-desk-down"
+                      }
+                    >
+                      {p.side}
+                    </span>
+                  </p>
+                  <Badge>{p.status}</Badge>
+                </div>
+                <p className="mt-1 font-mono text-xs text-desk-muted tabular">
+                  Balance {p.balance} · {p.marketId.slice(0, 12)}…
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
+
+      <Panel title="Claimable (your wallet)">
+        {!isConnected ? (
+          <p className="text-sm text-desk-muted">
+            Connect wallet — claims are never taken from the server wallet list.
+          </p>
+        ) : claimable.length === 0 ? (
           <StateBlock
             kind="empty"
             title="Nothing claimable"
-            detail="Resolved/voided balances with outcome tokens will show here after ticks."
+            detail="Only winning or voided holdings with redeemable payout show here. Losing-only balances are not labeled claimable."
           />
         ) : (
           <ul className="space-y-3">
@@ -170,6 +271,9 @@ export default function PortfolioPage() {
                   </p>
                   <p className="mt-0.5 font-mono text-[11px] text-desk-muted tabular">
                     Up {c.upBalance} · Down {c.downBalance}
+                    {c.winningOutcome != null
+                      ? ` · win ${c.winningOutcome === 0 ? "Up" : "Down"}`
+                      : ""}
                   </p>
                   {c.oracleGraphUrl && (
                     <a
@@ -197,12 +301,56 @@ export default function PortfolioPage() {
         )}
       </Panel>
 
-      <Panel title="Last trade">
+      <Panel title="Last wallet execution">
+        {!walletExec ? (
+          <StateBlock
+            kind="empty"
+            title="No wallet trades this session"
+            detail="Browser Copy results (submitted / partial / full / zero-fill) appear here."
+          />
+        ) : (
+          <div className="space-y-2 text-sm">
+            <p className="text-lg font-semibold">
+              <span
+                className={
+                  walletExec.side === "Up" ? "text-desk-accent" : "text-desk-down"
+                }
+              >
+                {walletExec.side}
+              </span>{" "}
+              · {walletExec.fillStatus}
+              {walletExec.fillStatus === "partial" ||
+              walletExec.fillStatus === "full"
+                ? ` qty ${walletExec.filledQty}`
+                : ""}
+              {" "}
+              @ {fmtNum(walletExec.price, 3)}
+            </p>
+            <p className="text-desk-muted">
+              {fmtDateTime(walletExec.at)} · requested {walletExec.requestedQty}
+            </p>
+            <p className="leading-relaxed text-desk-ink/85">{walletExec.message}</p>
+            {walletExec.txHash && (
+              <a
+                href={explorerTxUrl(walletExec.txHash)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1 font-mono text-xs text-desk-accent hover:underline"
+              >
+                {shortHash(walletExec.txHash)}
+                <ArrowSquareOut size={11} />
+              </a>
+            )}
+          </div>
+        )}
+      </Panel>
+
+      <Panel title="Last agent signal / trade">
         {!lastTrade ? (
           <StateBlock
             kind="empty"
-            title="No trades yet"
-            detail="Agent fills and copy trades appear here."
+            title="No agent events yet"
+            detail="Dry signals and live fills from the agent appear here (not your wallet)."
           />
         ) : (
           <div className="space-y-2 text-sm">
@@ -214,11 +362,15 @@ export default function PortfolioPage() {
               >
                 {lastTrade.side}
               </span>{" "}
-              · {lastTrade.size} @ {fmtNum(lastTrade.price, 3)}
+              · {lastTrade.fillStatus || (lastTrade.dryRun ? "signal" : "submitted")}
+              {lastTrade.filledQty != null
+                ? ` · filled ${lastTrade.filledQty}`
+                : ` · size ${lastTrade.size}`}{" "}
+              @ {fmtNum(lastTrade.price, 3)}
             </p>
             <p className="text-desk-muted">
               {fmtDateTime(lastTrade.at)} · edge {fmtPct(lastTrade.edge)}
-              {lastTrade.dryRun ? " · dry-run" : ""}
+              {lastTrade.dryRun ? " · dry" : ""}
             </p>
             <p className="leading-relaxed text-desk-ink/85">{lastTrade.reason}</p>
             {lastTrade.txHash && (

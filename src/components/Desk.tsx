@@ -19,22 +19,41 @@ import {
   fmtTime,
   shortHash,
 } from "@/lib/format";
-import { explorerTxUrl } from "@/lib/types";
+import { explorerTxUrl, type ClaimablePosition } from "@/lib/types";
+import { fetchWalletPortfolio } from "@/lib/clientExchange";
+import {
+  hasClientOperatorSecret,
+  operatorFetchHeaders,
+} from "@/lib/operatorSecret";
+import { readWalletExecution } from "@/lib/walletExecution";
 
 export default function Desk() {
   const search = useSearchParams();
   const focusMarket = search.get("market");
-  const { status, loading, error, busy, tick, refresh } = useDeskStatus({
+  const {
+    status,
+    loading,
+    error,
+    busy,
+    tick,
+    refresh,
+    operatorConfigured,
+  } = useDeskStatus({
     pollMs: 8000,
   });
   const {
     isConnected,
+    address,
     busy: tradeBusy,
     copyFromSignal,
     claimMarket,
+    lastExecution,
   } = useWalletTrade();
   const [toast, setToast] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [walletClaimable, setWalletClaimable] = useState<ClaimablePosition[]>(
+    [],
+  );
 
   useEffect(() => {
     const clock = setInterval(() => setNow(Date.now()), 1000);
@@ -49,16 +68,46 @@ export default function Desk() {
 
   useEffect(() => {
     if (!focusMarket) return;
+    if (!hasClientOperatorSecret()) {
+      setToast("Operator secret not configured — focus not applied");
+      return;
+    }
     void fetch("/api/focus", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: operatorFetchHeaders(),
       body: JSON.stringify({ marketId: focusMarket }),
-    }).then(() => refresh());
+    }).then(async (res) => {
+      if (!res.ok) {
+        const json = (await res.json().catch(() => ({}))) as { message?: string };
+        setToast(json.message || `Focus failed (${res.status})`);
+      }
+      await refresh();
+    });
   }, [focusMarket, refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadClaims() {
+      if (!isConnected || !address) {
+        setWalletClaimable([]);
+        return;
+      }
+      const view = await fetchWalletPortfolio(address);
+      if (!cancelled && view) setWalletClaimable(view.claimable);
+    }
+    void loadClaims();
+    return () => {
+      cancelled = true;
+    };
+  }, [isConnected, address, status?.lastTickAt, lastExecution]);
+
   const signal = status?.signal;
-  const claimable = status?.claimable ?? [];
+  const claimable =
+    isConnected && walletClaimable.length >= 0
+      ? walletClaimable
+      : [];
   const hasClaimable = claimable.length > 0;
+  const walletExec = lastExecution || readWalletExecution();
   const actionBusy = busy !== null || tradeBusy !== null;
   const edgeColor = useMemo(() => {
     if (signal?.edge == null) return "text-desk-muted";
@@ -102,11 +151,20 @@ export default function Desk() {
           <button
             type="button"
             onClick={() => void tick()}
-            disabled={actionBusy}
+            disabled={actionBusy || !operatorConfigured}
+            title={
+              operatorConfigured
+                ? "Run one agent tick"
+                : "Operator secret not configured"
+            }
             className="inline-flex items-center gap-1.5 rounded-desk-sm border border-desk-border bg-desk-panel px-3 py-1.5 text-xs text-desk-muted transition hover:text-desk-ink disabled:opacity-50"
           >
             <Lightning size={13} weight="fill" />
-            {busy === "tick" ? "Ticking..." : "Force signal"}
+            {busy === "tick"
+              ? "Ticking..."
+              : operatorConfigured
+                ? "Force signal"
+                : "Operator locked"}
           </button>
         }
       />
@@ -213,7 +271,12 @@ export default function Desk() {
               <p className="mt-1 text-sm text-desk-muted">
                 Edge {fmtPct(signal.lastTrade.edge)} ·{" "}
                 {fmtTime(signal.lastTrade.at)}
-                {signal.lastTrade.dryRun ? " · dry-run" : ""}
+                {" · "}
+                {signal.lastTrade.fillStatus ||
+                  (signal.lastTrade.dryRun ? "signal (dry)" : "submitted")}
+                {signal.lastTrade.filledQty != null
+                  ? ` · qty ${signal.lastTrade.filledQty}`
+                  : ""}
               </p>
               <p className="mt-2 text-sm leading-relaxed text-desk-ink/85">
                 {signal.lastTrade.reason}
@@ -282,8 +345,28 @@ export default function Desk() {
         </Link>
       </div>
 
+      {walletExec && (
+        <Panel title="Last wallet execution">
+          <p className="text-sm">
+            <span
+              className={
+                walletExec.side === "Up" ? "text-desk-accent" : "text-desk-down"
+              }
+            >
+              {walletExec.side}
+            </span>{" "}
+            · {walletExec.fillStatus}
+            {walletExec.filledQty != null
+              ? ` · qty ${walletExec.filledQty}`
+              : ""}{" "}
+            · {fmtTime(walletExec.at)}
+          </p>
+          <p className="mt-1 text-xs text-desk-muted">{walletExec.message}</p>
+        </Panel>
+      )}
+
       {hasClaimable && (
-        <Panel title="Claimable">
+        <Panel title="Claimable (your wallet)">
           <ul className="space-y-2">
             {claimable.map((c) => (
               <li

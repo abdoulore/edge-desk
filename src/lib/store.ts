@@ -15,7 +15,7 @@ const ACTIVITY_PATH = path.join(DATA_DIR, "activity.json");
 const MARKETS_PATH = path.join(DATA_DIR, "markets.json");
 const CLAIMABLE_PATH = path.join(DATA_DIR, "claimable.json");
 
-const ACTIVITY_LIMIT = 20;
+const ACTIVITY_LIMIT = 100;
 
 export interface DeskMeta {
   agentRunning: boolean;

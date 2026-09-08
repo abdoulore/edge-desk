@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { DeskStatus } from "@/lib/types";
+import {
+  hasClientOperatorSecret,
+  operatorFetchHeaders,
+} from "@/lib/operatorSecret";
 
 export function useDeskStatus(opts?: {
   pollMs?: number;
@@ -12,6 +16,7 @@ export function useDeskStatus(opts?: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"tick" | null>(null);
+  const operatorConfigured = hasClientOperatorSecret();
 
   const refresh = useCallback(async () => {
     try {
@@ -28,9 +33,23 @@ export function useDeskStatus(opts?: {
   }, []);
 
   const tick = useCallback(async () => {
+    if (!hasClientOperatorSecret()) {
+      setError("Operator secret not configured — cannot force tick");
+      return;
+    }
     setBusy("tick");
     try {
-      await fetch("/api/agent/tick", { method: "POST" });
+      const res = await fetch("/api/agent/tick", {
+        method: "POST",
+        headers: operatorFetchHeaders(),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        message?: string;
+        ok?: boolean;
+      };
+      if (!res.ok) {
+        setError(json.message || `Tick failed (${res.status})`);
+      }
       await refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Tick failed");
@@ -45,5 +64,13 @@ export function useDeskStatus(opts?: {
     return () => clearInterval(poll);
   }, [pollMs, refresh]);
 
-  return { status, loading, error, busy, refresh, tick };
+  return {
+    status,
+    loading,
+    error,
+    busy,
+    refresh,
+    tick,
+    operatorConfigured,
+  };
 }

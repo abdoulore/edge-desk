@@ -64,3 +64,29 @@ export function fmtDateTime(iso?: string | null): string {
     return "-";
   }
 }
+
+
+/** Format a raw ERC-6909 / collateral integer with token decimals. */
+export function formatRawBalance(
+  raw: string | bigint | number | null | undefined,
+  decimals = 6,
+  maxFrac = 6,
+): string {
+  if (raw == null || raw === "") return "0";
+  let n: bigint;
+  try {
+    n = typeof raw === "bigint" ? raw : BigInt(String(raw).split(".")[0] || "0");
+  } catch {
+    return String(raw);
+  }
+  const neg = n < 0n;
+  const abs = neg ? -n : n;
+  const d = Math.max(0, Math.min(36, Math.floor(decimals)));
+  const base = 10n ** BigInt(d);
+  const whole = abs / base;
+  let frac = (abs % base).toString().padStart(d, "0");
+  if (maxFrac < d) frac = frac.slice(0, maxFrac);
+  frac = frac.replace(/0+$/, "");
+  const s = frac ? `${whole.toString()}.${frac}` : whole.toString();
+  return neg ? `-${s}` : s;
+}

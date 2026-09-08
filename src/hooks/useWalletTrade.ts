@@ -8,7 +8,12 @@ import {
   placeIocWithWallet,
   redeemWithWallet,
 } from "@/lib/clientExchange";
-import type { DeskSignal, Side } from "@/lib/types";
+import { fillUserMessage } from "@/lib/fillStatus";
+import {
+  saveWalletExecution,
+  type WalletExecution,
+} from "@/lib/walletExecution";
+import type { DeskSignal, FillStatus, Side } from "@/lib/types";
 import { SHANNON_CHAIN_ID } from "@/wallet/config";
 
 /** Only trade the current market's recommendation — never a stale lastTrade side. */
@@ -33,13 +38,25 @@ function resolveTradeSide(
   return { ok: true, side: current };
 }
 
+export type WalletTradeResult = {
+  ok: boolean;
+  message: string;
+  txHash?: string;
+  fillStatus?: FillStatus;
+  filledQty?: number;
+  requestedQty?: number;
+};
+
 export function useWalletTrade() {
   const { address, isConnected, chainId } = useAccount();
   const { data: walletClient } = useWalletClient({ chainId: SHANNON_CHAIN_ID });
   const [busy, setBusy] = useState<"copy" | "claim" | null>(null);
+  const [lastExecution, setLastExecution] = useState<WalletExecution | null>(
+    null,
+  );
 
   const copyFromSignal = useCallback(
-    async (signal: DeskSignal | null | undefined) => {
+    async (signal: DeskSignal | null | undefined): Promise<WalletTradeResult> => {
       if (!signal) return { ok: false, message: "No signal to trade" };
       if (!isConnected || !address) {
         return { ok: false, message: "Connect your Shannon wallet to trade" };
@@ -89,12 +106,38 @@ export function useWalletTrade() {
           built.params.limitPrice,
           signal.marketId,
         );
-        return {
-          ok: true,
-          message: result.txHash
-            ? `Trade ${side} sent · ${result.txHash.slice(0, 10)}…`
-            : `Trade ${side} sent`,
+
+        const fillStatus = result.fillStatus;
+        const filledQty = Number.isFinite(result.filled) ? result.filled : 0;
+        const message = fillUserMessage(side, fillStatus, {
+          filledQty: Number.isFinite(result.filled) ? result.filled : null,
           txHash: result.txHash,
+        });
+
+        const exec: WalletExecution = {
+          at: new Date().toISOString(),
+          side,
+          marketId: signal.marketId,
+          symbol: built.params.symbol,
+          fillStatus,
+          filledQty,
+          requestedQty: built.params.size,
+          price: built.params.limitPrice,
+          txHash: result.txHash,
+          message,
+        };
+        saveWalletExecution(exec);
+        setLastExecution(exec);
+
+        // Zero-fill is not a successful fill — ok=false so UI doesn't celebrate.
+        const ok = fillStatus !== "zero-fill";
+        return {
+          ok,
+          message,
+          txHash: result.txHash,
+          fillStatus,
+          filledQty: Number.isFinite(result.filled) ? result.filled : undefined,
+          requestedQty: built.params.size,
         };
       } catch (e) {
         return {
@@ -140,6 +183,7 @@ export function useWalletTrade() {
     address,
     isConnected,
     busy,
+    lastExecution,
     copyFromSignal,
     claimMarket,
   };

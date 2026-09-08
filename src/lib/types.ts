@@ -11,10 +11,19 @@ export type MarketStatusLabel =
 
 export type SpotSource = "sdk" | "coingecko" | "none";
 
+/** Distinct execution outcomes — never conflate signal with fill. */
+export type FillStatus =
+  | "signal"
+  | "submitted"
+  | "partial"
+  | "full"
+  | "zero-fill";
+
 export interface LastTrade {
   marketId: string;
   symbol: string;
   side: Side;
+  /** Requested order size (human units). */
   size: number;
   price: number;
   edge: number;
@@ -22,6 +31,10 @@ export interface LastTrade {
   txHash?: string;
   dryRun: boolean;
   at: string;
+  /** Actual filled quantity when known (human units). */
+  filledQty?: number;
+  /** signal / submitted / partial / full / zero-fill */
+  fillStatus?: FillStatus;
 }
 
 export interface DeskSignal {
@@ -91,6 +104,8 @@ export interface ActivityEvent {
   edge?: number | null;
   txHash?: string;
   dryRun?: boolean;
+  fillStatus?: FillStatus;
+  filledQty?: number;
 }
 
 export interface DeskConfigView {
@@ -129,11 +144,37 @@ export interface ClaimablePosition {
   asset: string;
   intervalSec: number;
   status: "Resolved" | "Voided";
+  /** Human-formatted Up balance (token decimals applied). */
   upBalance: string;
+  /** Human-formatted Down balance (token decimals applied). */
   downBalance: string;
+  /** Raw integer strings when known. */
+  upBalanceRaw?: string;
+  downBalanceRaw?: string;
+  quoteDecimals?: number;
   winningOutcome?: number;
   oracleQuestionId?: string;
   oracleGraphUrl?: string;
+  /** True only when a payout is actually redeemable (winning or voided). */
+  payoutEligible?: boolean;
+}
+
+/** Open (or settled non-claimable) outcome holding for the connected wallet. */
+export interface WalletOpenPosition {
+  marketId: string;
+  asset: string;
+  intervalSec: number;
+  status: string;
+  outcomeIndex: number;
+  side: Side;
+  /** Human-formatted balance. */
+  balance: string;
+  balanceRaw: string;
+  quoteDecimals: number;
+  winningOutcome?: number | null;
+  voided: boolean;
+  /** True when this holding can be redeemed for payout. */
+  claimable: boolean;
 }
 
 export const SHANNON_EXPLORER_TX =

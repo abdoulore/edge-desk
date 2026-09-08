@@ -10,6 +10,8 @@ import {
 import { getExchange, oracleGraphUrl, statusLabel } from "@/lib/exchange";
 import { withMutex } from "@/lib/mutex";
 import { buildCopyOrderParams } from "@/lib/orderParams";
+import { classifyFill, fillActivityTitle } from "@/lib/fillStatus";
+import { formatRawBalance } from "@/lib/format";
 import {
   appendActivity,
   getClaimable,
@@ -525,17 +527,36 @@ export async function scanClaimable(
       });
       if (upBal === 0n && downBal === 0n) continue;
 
+      const win = asNum(oc.winningOutcome);
+      const decimals = Number((oc as { decimals?: number }).decimals ?? 6);
+      // Only mark claimable when payout is eligible (voided any side, or winning side).
+      let eligibleUp = false;
+      let eligibleDown = false;
+      if (isVoided) {
+        eligibleUp = upBal > 0n;
+        eligibleDown = downBal > 0n;
+      } else if (win === 0) {
+        eligibleUp = upBal > 0n;
+      } else if (win === 1) {
+        eligibleDown = downBal > 0n;
+      }
+      if (!eligibleUp && !eligibleDown) continue;
+
       const qid = String(m.oracleQuestionId || oc.oracleQuestionId || "");
       out.push({
         marketId,
         asset: String(m.asset || "").toUpperCase(),
         intervalSec: asNum(m.intervalSec) ?? 0,
         status: isVoided ? "Voided" : "Resolved",
-        upBalance: upBal.toString(),
-        downBalance: downBal.toString(),
-        winningOutcome: asNum(oc.winningOutcome) ?? undefined,
+        upBalance: formatRawBalance(upBal, decimals),
+        downBalance: formatRawBalance(downBal, decimals),
+        upBalanceRaw: upBal.toString(),
+        downBalanceRaw: downBal.toString(),
+        quoteDecimals: decimals,
+        winningOutcome: win ?? undefined,
         oracleQuestionId: qid || undefined,
         oracleGraphUrl: oracleGraphUrl(qid),
+        payoutEligible: true,
       });
     } catch {
       /* skip row */
@@ -678,20 +699,24 @@ export async function copyLastTrade(): Promise<{
       reason: `Copy (dry-run): mirror agent ${side} @ ${limit.toFixed(3)}`,
       dryRun: true,
       at: new Date().toISOString(),
+      filledQty: 0,
+      fillStatus: "signal",
     };
     await writeSignal({ ...signal, lastTrade: trade, updatedAt: trade.at });
     await appendActivity({
       kind: "copy",
       at: trade.at,
-      title: `Copy ${trade.side} (dry)`,
+      title: `Copy ${trade.side} signal (dry)`,
       detail: trade.reason,
       marketId: trade.marketId,
       asset: signal.asset,
       side: trade.side,
       edge: trade.edge,
       dryRun: true,
+      fillStatus: "signal",
+      filledQty: 0,
     });
-    return { ok: true, message: "DRY_RUN copy recorded", trade };
+    return { ok: true, message: "DRY_RUN copy recorded as signal (dry)", trade };
   }
 
   if (!cfg.privateKey) {
@@ -707,6 +732,13 @@ export async function copyLastTrade(): Promise<{
   }
 
   const result = await placeIoc(exchange, symbol, side, size, limit);
+  const filledQty =
+    result.filled != null && Number.isFinite(result.filled) ? result.filled : null;
+  const fillStatus = classifyFill({
+    requested: size,
+    filled: filledQty,
+    submitted: Boolean(result.txHash),
+  });
   const trade: LastTrade = {
     marketId: signal.marketId,
     symbol,
@@ -714,16 +746,21 @@ export async function copyLastTrade(): Promise<{
     size,
     price: limit,
     edge: signal.edge ?? 0,
-    reason: `Copied agent ${side}`,
+    reason:
+      fillStatus === "zero-fill"
+        ? `Copy ${side} submitted but filled qty 0`
+        : `Copied agent ${side}`,
     txHash: result.txHash,
     dryRun: false,
     at: new Date().toISOString(),
+    filledQty: filledQty ?? undefined,
+    fillStatus,
   };
   await writeSignal({ ...signal, lastTrade: trade, updatedAt: trade.at });
   await appendActivity({
     kind: "copy",
     at: trade.at,
-    title: `Copy ${trade.side}`,
+    title: `Copy ${fillActivityTitle(trade.side, fillStatus, filledQty)}`,
     detail: trade.reason,
     marketId: trade.marketId,
     asset: signal.asset,
@@ -731,8 +768,22 @@ export async function copyLastTrade(): Promise<{
     edge: trade.edge,
     txHash: trade.txHash,
     dryRun: false,
+    fillStatus,
+    filledQty: filledQty ?? undefined,
   });
-  return { ok: true, message: "Copy order sent", trade };
+  const ok = fillStatus !== "zero-fill";
+  return {
+    ok,
+    message:
+      fillStatus === "zero-fill"
+        ? "Copy tx mined with zero fill"
+        : fillStatus === "partial"
+          ? `Copy partial fill qty ${filledQty}`
+          : fillStatus === "full"
+            ? `Copy filled qty ${filledQty}`
+            : "Copy order submitted",
+    trade,
+  };
 }
 
 export async function runAgentTick(): Promise<DeskSignal> {
@@ -1109,6 +1160,8 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
               reason: signal.reason,
               dryRun: true,
               at: tradeAt,
+              filledQty: 0,
+              fillStatus: "signal",
             };
             tradedThisTick = true;
           } else if (cfg.privateKey) {
@@ -1121,6 +1174,15 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
                 limit,
               );
               const tradeAt = new Date().toISOString();
+              const filledQty =
+                res.filled != null && Number.isFinite(res.filled)
+                  ? res.filled
+                  : null;
+              const fillStatus = classifyFill({
+                requested: cfg.copySize,
+                filled: filledQty,
+                submitted: Boolean(res.txHash),
+              });
               signal.lastTrade = {
                 marketId: signal.marketId,
                 symbol: tradeSymbol,
@@ -1128,10 +1190,15 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
                 size: cfg.copySize,
                 price: limit,
                 edge: tradeEdge,
-                reason: signal.reason,
+                reason:
+                  fillStatus === "zero-fill"
+                    ? `${signal.reason} (zero-fill)`
+                    : signal.reason,
                 txHash: res.txHash,
                 dryRun: false,
                 at: tradeAt,
+                filledQty: filledQty ?? undefined,
+                fillStatus,
               };
               tradedThisTick = true;
             } catch (e) {
@@ -1192,10 +1259,17 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
 
   // Fix: don't compare lastTrade.at === updatedAt (rewritten later). Use flag.
   if (tradedThisTick && signal.lastTrade) {
+    const fs =
+      signal.lastTrade.fillStatus ||
+      (signal.lastTrade.dryRun ? "signal" : "submitted");
     await appendActivity({
       kind: "trade",
       at: signal.lastTrade.at,
-      title: `${signal.lastTrade.side} fill${signal.lastTrade.dryRun ? " (dry)" : ""}`,
+      title: fillActivityTitle(
+        signal.lastTrade.side,
+        fs,
+        signal.lastTrade.filledQty,
+      ),
       detail: signal.lastTrade.reason,
       marketId: signal.lastTrade.marketId,
       asset: signal.asset,
@@ -1203,6 +1277,8 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
       edge: signal.lastTrade.edge,
       txHash: signal.lastTrade.txHash,
       dryRun: signal.lastTrade.dryRun,
+      fillStatus: fs,
+      filledQty: signal.lastTrade.filledQty,
     });
   } else if (signal.error) {
     await appendActivity({

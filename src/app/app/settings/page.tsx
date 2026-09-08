@@ -5,28 +5,44 @@ import { Pause, Play, ArrowSquareOut } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import { Panel, StateBlock, Toast, PageHeader, Btn } from "@/components/ui";
 import { fmtInterval, fmtPct, fmtTime, shortAddr } from "@/lib/format";
+import {
+  hasClientOperatorSecret,
+  operatorFetchHeaders,
+} from "@/lib/operatorSecret";
 
 export default function SettingsPage() {
-  const { status, loading, error, refresh } = useDeskStatus({ pollMs: 15000 });
+  const { status, loading, error, refresh, operatorConfigured } = useDeskStatus({
+    pollMs: 15000,
+  });
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const canOperate = operatorConfigured || hasClientOperatorSecret();
 
   async function setPaused(paused: boolean) {
+    if (!canOperate) {
+      setToast("Operator secret not configured");
+      setTimeout(() => setToast(null), 3000);
+      return;
+    }
     setBusy(true);
     try {
       const res = await fetch("/api/pause", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: operatorFetchHeaders(),
         body: JSON.stringify({ paused }),
       });
       const json = (await res.json()) as { ok?: boolean; message?: string };
-      setToast(
-        json.ok
-          ? paused
-            ? "Agent paused"
-            : "Agent resumed"
-          : json.message || "Failed",
-      );
+      if (!res.ok) {
+        setToast(json.message || `Failed (${res.status})`);
+      } else {
+        setToast(
+          json.ok
+            ? paused
+              ? "Agent paused"
+              : "Agent resumed"
+            : json.message || "Failed",
+        );
+      }
       await refresh();
     } catch (e) {
       setToast(e instanceof Error ? e.message : "Pause failed");
@@ -101,6 +117,10 @@ export default function SettingsPage() {
         ? shortAddr(status.wallet) + " (optional)"
         : "none (non-custodial)",
     },
+    {
+      label: "Operator UI",
+      value: canOperate ? "secret configured (demo)" : "read-only",
+    },
   ];
 
   return (
@@ -138,18 +158,37 @@ export default function SettingsPage() {
           Pause stops the background agent from updating signals. Copy/Claim
           still use your connected wallet.
         </p>
+        {!canOperate && (
+          <p className="mb-3 rounded-desk border border-desk-warn/30 bg-desk-warn/5 px-3 py-2 text-xs text-desk-warn">
+            Operator secret not configured — pause/resume disabled. Set{" "}
+            <code className="font-mono">NEXT_PUBLIC_EDGE_DESK_SECRET</code> to
+            match server <code className="font-mono">EDGE_DESK_SECRET</code> for
+            local demo control (never commit real secrets).
+          </p>
+        )}
         <Btn
           variant="secondary"
-          disabled={busy}
+          disabled={busy || !canOperate}
           onClick={() => void setPaused(!status?.paused)}
           className="gap-2"
+          title={
+            canOperate
+              ? undefined
+              : "Operator secret not configured"
+          }
         >
           {status?.paused ? (
             <Play size={14} weight="fill" />
           ) : (
             <Pause size={14} weight="fill" />
           )}
-          {busy ? "..." : status?.paused ? "Resume agent" : "Pause signal loop"}
+          {busy
+            ? "..."
+            : !canOperate
+              ? "Operator locked"
+              : status?.paused
+                ? "Resume agent"
+                : "Pause signal loop"}
         </Btn>
       </Panel>
 
