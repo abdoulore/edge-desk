@@ -241,10 +241,10 @@ export default function Desk() {
           className="w-full py-3.5"
         >
           {tradeBusy === "copy"
-            ? "Copying..."
+            ? "Trading..."
             : isConnected
-              ? "Copy last trade"
-              : "Connect to copy"}
+              ? "Trade this signal"
+              : "Connect to trade"}
         </Btn>
         <Btn
           variant="secondary"

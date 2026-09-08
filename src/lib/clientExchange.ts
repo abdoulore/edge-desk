@@ -38,12 +38,84 @@ export function createReadExchange(): SomniaMarkets {
   });
 }
 
+function marketIdOf(entry: unknown): string {
+  if (!entry || typeof entry !== "object") return "";
+  const m = entry as Record<string, unknown>;
+  const info = m.info as Record<string, unknown> | undefined;
+  return String(info?.marketId || m.id || "").toLowerCase();
+}
+
+/**
+ * loadMarkets() must run on this exchange instance before createOrder —
+ * the SDK resolves symbols from an instance registry.
+ * Validates chain binding, optional marketId, and outcome symbol together.
+ */
+export async function ensureMarketReady(
+  exchange: SomniaMarkets,
+  opts: { symbol: string; marketId?: string },
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  const { symbol, marketId } = opts;
+  if (!symbol) return { ok: false, message: "Missing outcome symbol" };
+
+  let map: Record<string, unknown>;
+  try {
+    map = (await exchange.loadMarkets(true)) as Record<string, unknown>;
+  } catch (e) {
+    return {
+      ok: false,
+      message: `loadMarkets failed: ${e instanceof Error ? e.message : String(e)}`,
+    };
+  }
+
+  const direct = map[symbol];
+  let entry = direct;
+  if (!entry) {
+    const lower = symbol.toLowerCase();
+    entry = Object.entries(map).find(([k]) => k.toLowerCase() === lower)?.[1];
+  }
+  if (!entry) {
+    return {
+      ok: false,
+      message: `Unknown symbol ${symbol} after loadMarkets — market mapping missing`,
+    };
+  }
+
+  if (marketId) {
+    const mid = marketIdOf(entry);
+    if (mid && mid !== marketId.toLowerCase()) {
+      return {
+        ok: false,
+        message: `Symbol ${symbol} maps to market ${mid}, not ${marketId}`,
+      };
+    }
+  }
+
+  // Soft chain check — Shannon testnet wallet exchange is fixed at construction.
+  try {
+    const chainId = (exchange as unknown as { chain?: { id?: number } }).chain?.id;
+    if (chainId != null && chainId !== somniaShannon.id) {
+      return {
+        ok: false,
+        message: `Wrong chain ${chainId} — expected Shannon ${somniaShannon.id}`,
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return { ok: true };
+}
+
 export async function placeIocWithWallet(
   exchange: SomniaMarkets,
   symbol: string,
   size: number,
   limitPrice: number,
+  marketId?: string,
 ): Promise<{ txHash?: string }> {
+  const ready = await ensureMarketReady(exchange, { symbol, marketId });
+  if (!ready.ok) throw new Error(ready.message);
+
   const order = await exchange.createOrder(symbol, "limit", "buy", size, limitPrice, {
     timeInForce: "IOC",
   });

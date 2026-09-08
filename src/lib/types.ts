@@ -37,10 +37,14 @@ export interface DeskSignal {
   statusCode: number;
   upBid: number | null;
   upAsk: number | null;
+  /** Real Down-book ask when read; never invented from 1 - upAsk. */
+  downAsk?: number | null;
   upMid: number | null;
   spot: number | null;
   /** Where spot came from — only "sdk" drives trading signals. */
   spotSource?: SpotSource;
+  /** ISO timestamp of SDK spot observation when known. */
+  spotUpdatedAt?: string | null;
   reference: number | null;
   spotImpliedBias: number | null;
   edge: number | null;

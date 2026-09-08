@@ -2,9 +2,9 @@ import type { PlaceOrderResult } from "@somnia-chain/markets-sdk";
 import { getConfig } from "@/lib/config";
 import {
   bookMid,
-  computeEdge,
-  decideSide,
+  decideExecutableSide,
   explainReason,
+  impliedDownAsk,
   spotImpliedBias,
 } from "@/lib/edge";
 import { getExchange, oracleGraphUrl, statusLabel } from "@/lib/exchange";
@@ -36,6 +36,9 @@ function asNum(v: unknown): number | null {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : null;
 }
+
+/** Refuse trading when SDK spot observation is older than this (ms). */
+const MAX_SPOT_AGE_MS = 5 * 60 * 1000;
 
 type OutcomeLike = { symbol?: string; label?: string; index?: number };
 
@@ -264,11 +267,23 @@ async function loadCandidateMarkets(exchange: ReturnType<typeof getExchange>) {
 async function readSpotSdk(
   exchange: ReturnType<typeof getExchange>,
   asset: string,
-): Promise<number | null> {
+): Promise<{ spot: number; updatedAtMs: number | null } | null> {
   try {
     const p = await exchange.fetchPrice(asset);
-    const n = asNum(p && typeof p === "object" ? (p as { price?: unknown }).price : p);
-    if (n != null && n > 0) return n;
+    if (p == null) return null;
+    if (typeof p === "object") {
+      const row = p as { price?: unknown; timestamp?: unknown; datetime?: unknown };
+      const n = asNum(row.price);
+      if (n == null || n <= 0) return null;
+      let updatedAtMs = asNum(row.timestamp);
+      // UnifiedPrice.timestamp is ms; LivePrice.blockTimestamp is unix seconds.
+      if (updatedAtMs != null && updatedAtMs > 0 && updatedAtMs < 1e12) {
+        updatedAtMs = updatedAtMs * 1000;
+      }
+      return { spot: n, updatedAtMs };
+    }
+    const n = asNum(p);
+    if (n != null && n > 0) return { spot: n, updatedAtMs: null };
   } catch {
     /* ignore */
   }
@@ -296,12 +311,18 @@ async function readSpotCoinGecko(asset: string): Promise<number | null> {
 async function readSpotLabeled(
   exchange: ReturnType<typeof getExchange>,
   asset: string,
-): Promise<{ spot: number | null; source: SpotSource }> {
+): Promise<{
+  spot: number | null;
+  source: SpotSource;
+  updatedAtMs: number | null;
+}> {
   const sdk = await readSpotSdk(exchange, asset);
-  if (sdk != null) return { spot: sdk, source: "sdk" };
+  if (sdk != null) {
+    return { spot: sdk.spot, source: "sdk", updatedAtMs: sdk.updatedAtMs };
+  }
   const cg = await readSpotCoinGecko(asset);
-  if (cg != null) return { spot: cg, source: "coingecko" };
-  return { spot: null, source: "none" };
+  if (cg != null) return { spot: cg, source: "coingecko", updatedAtMs: null };
+  return { spot: null, source: "none", updatedAtMs: null };
 }
 
 /** OracleHub / explorer answers use 2 decimal places (ORACLE_PRICE_DECIMALS). */
@@ -614,14 +635,21 @@ export async function copyLastTrade(): Promise<{
 }> {
   const cfg = getConfig();
   const signal = await readSignal();
-  if (!signal?.lastTrade && !signal?.recommendedSide) {
-    return { ok: false, message: "No last agent trade or recommendation to copy" };
+  // Only current recommendedSide on the current market — never a stale lastTrade side.
+  const side = signal?.recommendedSide as Side | null;
+  if (!signal || !side) {
+    return {
+      ok: false,
+      message: "No current qualifying recommendation to trade",
+    };
   }
-
-  const side =
-    signal.lastTrade?.side ||
-    (signal.recommendedSide as Side | null);
-  if (!side) return { ok: false, message: "No side to copy" };
+  if (
+    signal.lastTrade?.marketId &&
+    signal.marketId &&
+    signal.lastTrade.marketId.toLowerCase() !== signal.marketId.toLowerCase()
+  ) {
+    // Ignore mismatched lastTrade; side already comes from recommendedSide only.
+  }
 
   const built = buildCopyOrderParams({
     side,
@@ -629,9 +657,12 @@ export async function copyLastTrade(): Promise<{
     downSymbol: signal.downSymbol,
     upBid: signal.upBid,
     upAsk: signal.upAsk,
+    downAsk: signal.downAsk ?? null,
     size: cfg.copySize,
     marketId: signal.marketId,
     edge: signal.edge,
+    bias: signal.spotImpliedBias,
+    minEdge: signal.edgeThreshold ?? cfg.edgeThreshold,
   });
   if (!built.ok) return { ok: false, message: built.message };
   const { symbol, size, limitPrice: limit } = built.params;
@@ -928,8 +959,17 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
       preferredMissing,
     };
 
+    // Drop lastTrade when the focused market window changes.
+    if (
+      signal.lastTrade &&
+      signal.lastTrade.marketId.toLowerCase() !== chosen.marketId.toLowerCase()
+    ) {
+      signal.lastTrade = null;
+    }
+
     let upBid: number | null = null;
     let upAsk: number | null = null;
+    let downAsk: number | null = null;
     try {
       const book = await exchange.fetchOrderBook(upSymbol, 5);
       upBid = asNum(book.bids?.[0]?.[0]);
@@ -937,51 +977,90 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
     } catch (e) {
       signal.error = `Book read failed: ${e instanceof Error ? e.message : String(e)}`;
     }
+    if (downSymbol) {
+      try {
+        const dbook = await exchange.fetchOrderBook(downSymbol, 5);
+        downAsk = asNum(dbook.asks?.[0]?.[0]);
+      } catch {
+        /* optional */
+      }
+    }
+    const downAskExec = impliedDownAsk(upBid, downAsk);
     const mid = bookMid(upBid, upAsk);
     signal.upBid = upBid;
     signal.upAsk = upAsk;
+    signal.downAsk = downAskExec;
     signal.upMid = mid;
 
-    const { spot, source: spotSource } = await readSpotLabeled(
-      exchange,
-      signal.asset,
-    );
+    const {
+      spot,
+      source: spotSource,
+      updatedAtMs: spotUpdatedAtMs,
+    } = await readSpotLabeled(exchange, signal.asset);
     signal.spotSource = spotSource;
+    signal.spotUpdatedAt =
+      spotUpdatedAtMs != null ? new Date(spotUpdatedAtMs).toISOString() : null;
 
     // Only SDK spot drives edge / recommendations. CoinGecko is display-only.
-    const spotForEdge = spotSource === "sdk" ? spot : null;
-    let reference = await readReference(
+    let spotForEdge = spotSource === "sdk" ? spot : null;
+    const spotStale =
+      spotForEdge != null &&
+      spotUpdatedAtMs != null &&
+      Date.now() - spotUpdatedAtMs > MAX_SPOT_AGE_MS;
+    if (spotStale) {
+      spotForEdge = null;
+    }
+
+    // Never fabricate reference from current spot — wait for opening/strike.
+    const reference = await readReference(
       exchange,
       chosen.marketId,
       chosen.m,
       spotForEdge ?? spot,
     );
-    if (reference == null && spotForEdge != null) reference = spotForEdge;
 
     signal.spot = spot;
     signal.reference = reference;
 
-    if (spotSource !== "sdk") {
+    if (spotSource !== "sdk" || spotStale) {
       signal.spotImpliedBias = null;
       signal.edge = null;
       signal.recommendedSide = null;
-      const feedLabel =
-        spotSource === "coingecko"
-          ? "CoinGecko (display only)"
-          : "no SDK spot feed";
-      signal.reason =
-        mid == null
-          ? `${signal.asset} book empty and ${feedLabel} — neutral, no trade signal.`
-          : `${signal.asset} spot from ${feedLabel}; refusing to invent edge for trading. Book mid ${((mid ?? 0) * 100).toFixed(1)}%. Connect SDK price feed for signals.`;
+      if (spotStale) {
+        signal.reason = `${signal.asset} SDK spot is stale (${signal.spotUpdatedAt}) — refusing to trade on old prices.`;
+      } else {
+        const feedLabel =
+          spotSource === "coingecko"
+            ? "CoinGecko (display only)"
+            : "no SDK spot feed";
+        signal.reason =
+          mid == null
+            ? `${signal.asset} book empty and ${feedLabel} — neutral, no trade signal.`
+            : `${signal.asset} spot from ${feedLabel}; refusing to invent edge for trading. Book mid ${((mid ?? 0) * 100).toFixed(1)}%. Connect SDK price feed for signals.`;
+      }
+    } else if (reference == null) {
+      signal.spotImpliedBias = null;
+      signal.edge = null;
+      signal.recommendedSide = null;
+      signal.reason = `Waiting for ${signal.asset} opening/strike reference — no trade until settlement boundary is known.`;
+    } else if (spotForEdge == null) {
+      signal.spotImpliedBias = null;
+      signal.edge = null;
+      signal.recommendedSide = null;
+      signal.reason = `Waiting for ${signal.asset} SDK spot — no trade signal.`;
     } else {
-      const bias =
-        spotForEdge != null && reference != null
-          ? spotImpliedBias(spotForEdge, reference)
-          : null;
+      const bias = spotImpliedBias(spotForEdge, reference);
       signal.spotImpliedBias = bias;
-      const { edge } = computeEdge(bias ?? 0.5, mid);
-      signal.edge = edge;
-      const side = decideSide(edge, cfg.edgeThreshold);
+      const decided = decideExecutableSide({
+        bias,
+        mid,
+        upAsk,
+        downAsk: downAskExec,
+        threshold: cfg.edgeThreshold,
+      });
+      const side = decided.side;
+      // Surface model mid edge for honesty; recommendation uses executable.
+      signal.edge = side != null ? decided.execEdge : decided.midEdge;
       signal.recommendedSide = side;
       signal.reason = explainReason({
         asset: signal.asset,
@@ -989,9 +1068,12 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
         reference,
         bias,
         mid,
-        edge,
+        edge: decided.midEdge,
         side,
         threshold: cfg.edgeThreshold,
+        execCost: decided.execCost,
+        execEdge: decided.execEdge,
+        rejectedForCost: decided.rejectedForCost,
       });
       if (preferredMissing) {
         signal.reason += ` (preferred ${cfg.preferredAsset} ${cfg.preferredIntervalSec}s window not live — showing best available)`;
@@ -1006,19 +1088,15 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
           if (upAsk != null) limit = Math.min(0.99, upAsk + 0.02);
           else signal.reason += " (no ask to cross — skipped)";
         } else {
-          limit =
-            upBid != null
-              ? Math.min(0.99, 1 - upBid + 0.02)
-              : upAsk != null
-                ? Math.min(0.99, 1 - upAsk + 0.02)
-                : null;
-          if (limit == null || !downSymbol) {
+          if (downAskExec != null && downSymbol) {
+            limit = Math.min(0.99, downAskExec + 0.02);
+          } else {
             signal.reason += " (no Down liquidity — skipped)";
-            limit = null;
           }
         }
 
         if (limit != null && tradeSymbol) {
+          const tradeEdge = decided.execEdge ?? decided.midEdge ?? 0;
           if (cfg.dryRun || !cfg.agentTrade) {
             const tradeAt = new Date().toISOString();
             signal.lastTrade = {
@@ -1027,7 +1105,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
               side,
               size: cfg.copySize,
               price: limit,
-              edge: edge ?? 0,
+              edge: tradeEdge,
               reason: signal.reason,
               dryRun: true,
               at: tradeAt,
@@ -1049,7 +1127,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
                 side,
                 size: cfg.copySize,
                 price: limit,
-                edge: edge ?? 0,
+                edge: tradeEdge,
                 reason: signal.reason,
                 txHash: res.txHash,
                 dryRun: false,
@@ -1060,7 +1138,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
               signal.error = `Order failed: ${e instanceof Error ? e.message : String(e)}`;
             }
           } else {
-            signal.reason += " (signal-only — connect wallet to Copy)";
+            signal.reason += " (signal-only — connect wallet to trade)";
           }
         }
       }
