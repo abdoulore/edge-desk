@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getExchange } from "@/lib/exchange";
 import {
-  getMarkets,
   readActivity,
   readClaimable,
   readMarkets,
@@ -20,10 +19,7 @@ export async function GET() {
   const meta = await readMeta();
   const activity = await readActivity();
   const claimable = await readClaimable();
-  let markets = getMarkets();
-  if (markets.length === 0) {
-    markets = await readMarkets();
-  }
+  const markets = await readMarkets();
 
   let wallet: string | undefined;
   try {
@@ -35,10 +31,11 @@ export async function GET() {
   }
 
   const lastTickAt = meta.lastTickAt;
+  const heartbeatAt = meta.agentHeartbeatAt ?? lastTickAt;
   const staleMs = Math.max(cfg.agentIntervalMs * 2.5, 20_000);
   const agentStalled =
-    !lastTickAt ||
-    Date.now() - new Date(lastTickAt).getTime() > staleMs;
+    !heartbeatAt ||
+    Date.now() - new Date(heartbeatAt).getTime() > staleMs;
 
   const body: DeskStatus = {
     ok: true,
@@ -64,6 +61,7 @@ export async function GET() {
     agentStalled,
     paused: Boolean(meta.paused),
     lastTickAt,
+    agentHeartbeatAt: meta.agentHeartbeatAt ?? null,
     focusMarketId: meta.focusMarketId ?? null,
     preferredMissing: Boolean(signal?.preferredMissing),
   };

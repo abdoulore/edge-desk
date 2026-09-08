@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "agent": "tsx scripts/agent-loop.ts"
+    "agent": "tsx scripts/agent-loop.ts",
+    "verify": "tsx scripts/verify-stage1-p0.ts && tsx scripts/verify-stage2.ts && tsx scripts/verify-stage3.ts",
+    "verify:stage3": "tsx scripts/verify-stage3.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

@@ -135,6 +135,8 @@ export interface DeskStatus {
   agentStalled: boolean;
   paused: boolean;
   lastTickAt: string | null;
+  /** ISO time of last agent-loop heartbeat (present when worker is alive). */
+  agentHeartbeatAt?: string | null;
   focusMarketId: string | null;
   preferredMissing: boolean;
 }

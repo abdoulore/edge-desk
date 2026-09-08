@@ -8,30 +8,134 @@ import type {
   MarketSummary,
 } from "./types";
 
-const DATA_DIR = path.join(process.cwd(), "data");
-const SIGNAL_PATH = path.join(DATA_DIR, "lastSignal.json");
-const META_PATH = path.join(DATA_DIR, "meta.json");
-const ACTIVITY_PATH = path.join(DATA_DIR, "activity.json");
-const MARKETS_PATH = path.join(DATA_DIR, "markets.json");
-const CLAIMABLE_PATH = path.join(DATA_DIR, "claimable.json");
+/** Override for tests; default is <cwd>/data. */
+function dataDir(): string {
+  return process.env.EDGE_DESK_DATA_DIR || path.join(process.cwd(), "data");
+}
+
+function signalPath() {
+  return path.join(dataDir(), "lastSignal.json");
+}
+function metaPath() {
+  return path.join(dataDir(), "meta.json");
+}
+function activityPath() {
+  return path.join(dataDir(), "activity.json");
+}
+function marketsPath() {
+  return path.join(dataDir(), "markets.json");
+}
+function claimablePath() {
+  return path.join(dataDir(), "claimable.json");
+}
 
 const ACTIVITY_LIMIT = 100;
 
 export interface DeskMeta {
   agentRunning: boolean;
   lastTickAt: string | null;
+  /** Updated by the always-on agent loop each cycle (including when paused). */
+  agentHeartbeatAt?: string | null;
   lastError?: string;
   paused?: boolean;
   focusMarketId?: string | null;
 }
 
+type CacheSlot<T> = {
+  mtimeMs: number;
+  data: T;
+};
+
+let claimableCache: CacheSlot<ClaimablePosition[]> | null = null;
+let marketsCache: CacheSlot<MarketSummary[]> | null = null;
+let activityCache: CacheSlot<ActivityEvent[]> | null = null;
+
 async function ensureDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.mkdir(dataDir(), { recursive: true });
+}
+
+async function fileMtimeMs(filePath: string): Promise<number | null> {
+  try {
+    const st = await fs.stat(filePath);
+    return st.mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atomic JSON persistence: write temp sibling then rename.
+ * Errors are logged and rethrown (never silently swallowed).
+ */
+export async function writeJsonAtomic(
+  filePath: string,
+  data: unknown,
+): Promise<void> {
+  await ensureDir();
+  const dir = path.dirname(filePath);
+  const tmp = path.join(
+    dir,
+    `.${path.basename(filePath)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  const payload = JSON.stringify(data, null, 2);
+  try {
+    await fs.writeFile(tmp, payload, "utf8");
+    await fs.rename(tmp, filePath);
+  } catch (err) {
+    console.error(`[store] write failed for ${filePath}:`, err);
+    try {
+      await fs.unlink(tmp);
+    } catch {
+      /* ignore cleanup */
+    }
+    throw err;
+  }
+}
+
+async function readJsonFile<T>(filePath: string): Promise<{
+  data: T;
+  mtimeMs: number;
+} | null> {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    const st = await fs.stat(filePath);
+    return { data: JSON.parse(raw) as T, mtimeMs: st.mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+/** Reload from disk when mtime changes (cross-process consistency). */
+async function readCached<T>(
+  filePath: string,
+  slot: CacheSlot<T> | null,
+  empty: T,
+): Promise<{ data: T; slot: CacheSlot<T> }> {
+  const mtime = await fileMtimeMs(filePath);
+  if (slot && mtime != null && slot.mtimeMs === mtime) {
+    return { data: slot.data, slot };
+  }
+  const loaded = await readJsonFile<T>(filePath);
+  if (!loaded) {
+    const next: CacheSlot<T> = { mtimeMs: mtime ?? 0, data: empty };
+    return { data: empty, slot: next };
+  }
+  const next: CacheSlot<T> = { mtimeMs: loaded.mtimeMs, data: loaded.data };
+  return { data: loaded.data, slot: next };
+}
+
+async function rememberWrite<T>(
+  filePath: string,
+  data: T,
+): Promise<CacheSlot<T>> {
+  await writeJsonAtomic(filePath, data);
+  const mtime = (await fileMtimeMs(filePath)) ?? Date.now();
+  return { mtimeMs: mtime, data };
 }
 
 export async function readSignal(): Promise<DeskSignal | null> {
   try {
-    const raw = await fs.readFile(SIGNAL_PATH, "utf8");
+    const raw = await fs.readFile(signalPath(), "utf8");
     return JSON.parse(raw) as DeskSignal;
   } catch {
     return null;
@@ -39,18 +143,18 @@ export async function readSignal(): Promise<DeskSignal | null> {
 }
 
 export async function writeSignal(signal: DeskSignal): Promise<void> {
-  await ensureDir();
-  await fs.writeFile(SIGNAL_PATH, JSON.stringify(signal, null, 2), "utf8");
+  await writeJsonAtomic(signalPath(), signal);
 }
 
 export async function readMeta(): Promise<DeskMeta> {
   try {
-    const raw = await fs.readFile(META_PATH, "utf8");
+    const raw = await fs.readFile(metaPath(), "utf8");
     return JSON.parse(raw) as DeskMeta;
   } catch {
     return {
       agentRunning: false,
       lastTickAt: null,
+      agentHeartbeatAt: null,
       paused: false,
       focusMarketId: null,
     };
@@ -58,8 +162,7 @@ export async function readMeta(): Promise<DeskMeta> {
 }
 
 export async function writeMeta(meta: DeskMeta): Promise<void> {
-  await ensureDir();
-  await fs.writeFile(META_PATH, JSON.stringify(meta, null, 2), "utf8");
+  await writeJsonAtomic(metaPath(), meta);
 }
 
 export async function patchMeta(patch: Partial<DeskMeta>): Promise<DeskMeta> {
@@ -69,7 +172,9 @@ export async function patchMeta(patch: Partial<DeskMeta>): Promise<DeskMeta> {
   return next;
 }
 
-export async function updateLastTrade(trade: LastTrade): Promise<DeskSignal | null> {
+export async function updateLastTrade(
+  trade: LastTrade,
+): Promise<DeskSignal | null> {
   const signal = await readSignal();
   if (!signal) return null;
   const next = {
@@ -81,86 +186,71 @@ export async function updateLastTrade(trade: LastTrade): Promise<DeskSignal | nu
   return next;
 }
 
-/** In-memory claimable cache + disk mirror */
-let claimableCache: ClaimablePosition[] | null = null;
-
+/** In-memory claimable cache + disk mirror (mtime-validated). */
 export function setClaimable(rows: ClaimablePosition[]) {
-  claimableCache = rows;
+  claimableCache = { mtimeMs: claimableCache?.mtimeMs ?? Date.now(), data: rows };
   void persistClaimable(rows);
 }
 
 export function getClaimable(): ClaimablePosition[] {
-  return claimableCache ?? [];
+  return claimableCache?.data ?? [];
 }
 
 async function persistClaimable(rows: ClaimablePosition[]) {
   try {
-    await ensureDir();
-    await fs.writeFile(CLAIMABLE_PATH, JSON.stringify(rows, null, 2), "utf8");
-  } catch {
-    /* ignore */
+    claimableCache = await rememberWrite(claimablePath(), rows);
+  } catch (err) {
+    console.error("[store] persistClaimable failed:", err);
   }
 }
 
 export async function readClaimable(): Promise<ClaimablePosition[]> {
-  if (claimableCache !== null) return claimableCache;
-  try {
-    const raw = await fs.readFile(CLAIMABLE_PATH, "utf8");
-    const rows = JSON.parse(raw) as ClaimablePosition[];
-    claimableCache = rows;
-    return rows;
-  } catch {
-    claimableCache = [];
-    return [];
-  }
+  const { data, slot } = await readCached<ClaimablePosition[]>(
+    claimablePath(),
+    claimableCache,
+    [],
+  );
+  claimableCache = slot;
+  return data;
 }
 
-/** Markets list — memory + disk mirror */
-let marketsCache: MarketSummary[] = [];
-
+/** Markets list — memory + disk mirror (mtime-validated). */
 export function setMarkets(rows: MarketSummary[]) {
-  marketsCache = rows;
+  marketsCache = { mtimeMs: marketsCache?.mtimeMs ?? Date.now(), data: rows };
   void persistMarkets(rows);
 }
 
 export function getMarkets(): MarketSummary[] {
-  return marketsCache;
+  return marketsCache?.data ?? [];
 }
 
 async function persistMarkets(rows: MarketSummary[]) {
   try {
-    await ensureDir();
-    await fs.writeFile(MARKETS_PATH, JSON.stringify(rows, null, 2), "utf8");
-  } catch {
-    /* ignore */
+    marketsCache = await rememberWrite(marketsPath(), rows);
+  } catch (err) {
+    console.error("[store] persistMarkets failed:", err);
   }
 }
 
 export async function readMarkets(): Promise<MarketSummary[]> {
-  if (marketsCache.length > 0) return marketsCache;
-  try {
-    const raw = await fs.readFile(MARKETS_PATH, "utf8");
-    const rows = JSON.parse(raw) as MarketSummary[];
-    marketsCache = rows;
-    return rows;
-  } catch {
-    return [];
-  }
+  const { data, slot } = await readCached<MarketSummary[]>(
+    marketsPath(),
+    marketsCache,
+    [],
+  );
+  marketsCache = slot;
+  return data;
 }
 
-/** Activity ring buffer — last N events */
-let activityCache: ActivityEvent[] | null = null;
-
+/** Activity ring buffer — last N events (mtime-validated). */
 export async function readActivity(): Promise<ActivityEvent[]> {
-  if (activityCache) return activityCache;
-  try {
-    const raw = await fs.readFile(ACTIVITY_PATH, "utf8");
-    activityCache = JSON.parse(raw) as ActivityEvent[];
-    return activityCache;
-  } catch {
-    activityCache = [];
-    return activityCache;
-  }
+  const { data, slot } = await readCached<ActivityEvent[]>(
+    activityPath(),
+    activityCache,
+    [],
+  );
+  activityCache = slot;
+  return data;
 }
 
 export async function appendActivity(
@@ -182,12 +272,14 @@ export async function appendActivity(
   } else {
     list.unshift(next);
   }
-  activityCache = list.slice(0, ACTIVITY_LIMIT);
-  await ensureDir();
-  await fs.writeFile(
-    ACTIVITY_PATH,
-    JSON.stringify(activityCache, null, 2),
-    "utf8",
-  );
-  return activityCache;
+  const trimmed = list.slice(0, ACTIVITY_LIMIT);
+  activityCache = await rememberWrite(activityPath(), trimmed);
+  return activityCache.data;
+}
+
+/** Test helper: drop in-memory caches without touching disk. */
+export function __resetStoreCachesForTests() {
+  claimableCache = null;
+  marketsCache = null;
+  activityCache = null;
 }

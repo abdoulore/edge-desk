@@ -52,13 +52,28 @@ Open http://localhost:3000 (landing) or http://localhost:3000/app/desk
 
 Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 
-### Env
+## Production / always-on worker
+
+Use persistent disk for data JSON; not for serverless.
+
+One operator path:
+
+Run build, next start, and the agent script on the same persistent host.
+
+- The package script named agent runs scripts/agent-loop.ts and loads project-root .env so values match Next.
+- GET /api/status is read-only and exposes agentHeartbeatAt for stall detection.
+- Public /api/agent/tick requires auth and must not be a second open scheduler.
+- Pause/focus UI controls need matching public and server desk tokens.
+
+
+## Env
 
 - PRIVATE_KEY — optional (not required for users)
 - NETWORK=testnet
 - DRY_RUN=true
 - AGENT_TRADE=false — keep false for signal-only agent
-- EDGE_DESK_SECRET — optional; gates custodial copy/claim
+- EDGE_DESK_SECRET — optional; gates custodial copy/claim and operator mutations (pause/focus/tick)
+- NEXT_PUBLIC_EDGE_DESK_SECRET — same value when enabling UI operator controls (never commit real secrets)
 - EDGE_THRESHOLD=0.05
 - COPY_SIZE=1
 - VENUE_ID — testnet venue default in .env.example
@@ -72,6 +87,16 @@ Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
 - IOC for takers (connected wallet)
 - Voided: redeem both sides at 0.5
 - Settled via listBinaryMarkets status Finalized
+
+## Quality gates
+
+Lint, build, and regression scripts must pass; GitHub Actions runs them on push and PR.
+
+## Known limitations
+
+- Filesystem JSON store requires persistent disk; unsuitable for typical ephemeral serverless.
+- Production dependency audit may report transitive findings; triage by reachability before blind upgrades.
+- Model output is an experimental heuristic, not a calibrated probability.
 
 ## License
 
