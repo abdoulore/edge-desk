@@ -1,103 +1,140 @@
 # Edge Desk
 
-Explainable rule-based trading agent + product site (landing + multi-page app) for **DreamDEX binary Event Contracts** (Up/Down on BTC/ETH short windows) on **Somnia Shannon testnet** (chain 50312).
+Explainable, rule-based trading desk for **DreamDEX binary Event Contracts** (Up/Down on BTC/ETH short windows) on **Somnia Shannon testnet** (chain ID `50312`).
 
-Built for the **Somnia x DreamDEX Event Contracts** hackathon. No LLM — every trade comes with a one-sentence plain-English reason.
+Built for the **Somnia × DreamDEX Event Contracts** hackathon ([DoraHacks](https://dorahacks.io/hackathon/event-contracts/detail); extended deadline **11 Sep 2026**). No LLM — every signal includes a one-sentence plain-English reason.
 
-## Product model
+## What it is
 
-Users bring their own Shannon wallet. The server agent computes edge and reasons; it does not place live IOC unless AGENT_TRADE is explicitly enabled. Copy/Claim use wagmi walletClient with markets-sdk.
+Users connect their own Shannon wallet. The server agent computes spot-vs-book edge and a reason string; it does **not** place live IOC unless `AGENT_TRADE=true` is set explicitly. **Copy** and **Claim** run client-side via wagmi + `@somnia-chain/markets-sdk` (non-custodial).
 
-## Pitch
+Default product mode is **signal-only**: `DRY_RUN=true`, `AGENT_TRADE=false`.
 
-Event Contract books quote Up as a probability in (0, 1). Spot often moves before the book catches up. Edge Desk watches a live window (prefer BTC 15m), compares spot vs window reference to a fair Up probability, subtracts the book mid, and only crosses with IOC when |edge| >= threshold.
+## Quickstart (local)
 
-## Architecture
+Requires Node 22+ (CI uses 22). Persistent writable `data/` directory.
 
-- Non-custodial: users connect Shannon wallet; Copy/Claim sign client-side.
-- Agent (`src/agent/tick.ts`): signal-only by default (edge/reason/markets); mutex; persist data/lastSignal.json.
-- APIs: GET /api/status, POST /api/agent/tick (signal), POST /api/focus, POST /api/pause. Custodial copy/claim require EDGE_DESK_SECRET.
-- UI polls /api/status only (no dual trading tick). wagmi ConnectButton in AppShell.
-- DRY_RUN=true and AGENT_TRADE=false by default. Key by marketId/symbol — never pool address.
+```bash
+git clone https://github.com/abdoulore/edge-desk.git
+cd edge-desk
+npm ci
+cp .env.example .env
+# Edit .env as needed. For local operator buttons, set BOTH:
+#   EDGE_DESK_SECRET=dev-secret
+#   NEXT_PUBLIC_EDGE_DESK_SECRET=dev-secret
+npm run build
+npm run start          # terminal A — Next on :3000
+npm run agent          # terminal B — always-on agent-loop
+# Or one process:
+# npm run start:all
+```
 
-## Edge formula
+Open `http://localhost:3000` (landing) or `http://localhost:3000/app/desk`.
+
+Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
+
+### Operator secret
+
+- `EDGE_DESK_SECRET` — required header/token for operator mutations (pause / focus / tick) and gated custodial server routes.
+- `NEXT_PUBLIC_EDGE_DESK_SECRET` — same value for the browser UI so local demo controls work.
+- Never commit real secrets. Without the public twin, the UI stays read-only for those controls.
+
+## Architecture (short)
+
+| Piece | Role |
+| --- | --- |
+| `src/agent/tick.ts` | Edge calc + reason; mutex; writes `data/lastSignal.json` |
+| `scripts/agent-loop.ts` | Always-on scheduler; loads project-root `.env` |
+| `GET /api/status` | Read-only status + heartbeat |
+| `POST /api/agent/tick` | Secret-gated; not a second open scheduler |
+| Desk UI | Polls `/api/status`; Copy/Claim via connected wallet |
+
+Edge sketch:
 
 ```
-spot_implied_bias = clamp(0.5 + k * (spot - reference) / reference, 0.05, 0.95)
-                    k = 8
+spot_implied_bias = clamp(0.5 + k * (spot - reference) / reference, 0.05, 0.95)  # k=8
 book_up_mid       = (bestBid + bestAsk) / 2
 edge              = spot_implied_bias - book_up_mid
 trade Up   if edge  >=  EDGE_THRESHOLD
 trade Down if edge  <= -EDGE_THRESHOLD
 ```
 
-## Stack
+Key by `marketId` / symbol — never pool address. Gate writes on on-chain Trading status. IOC for wallet takers.
 
-- Next.js App Router + TypeScript + Tailwind
-- @somnia-chain/markets-sdk >= 0.29.0 + viem + wagmi v2 + @tanstack/react-query
-- Shannon testnet 50312
-- Event contracts via SDK only (no DreamDEX HTTP API)
+## Demo video
 
-## Setup
+A silent ~2–3 minute walkthrough exists **locally** for the submitter (`demo/` is gitignored). There is **no public video URL in this repo**. Attach the file on the DoraHacks submission form rather than inventing a link.
 
-```bash
-cd edge-desk
-cp .env.example .env
-npm install
-npm run build
-npm run dev
-```
+## Transaction evidence (Shannon testnet)
 
-Open http://localhost:3000 (landing) or http://localhost:3000/app/desk
+Live fills from earlier funded testnet work (verify on Shannon explorer):
 
-Faucet (tUSDC + STT): https://t.me/+XHq0F0JXMyhmMzM0
+- https://shannon-explorer.somnia.network/tx/0x8c35a5ca04cb0635de516cca7e2dd164c36c5f476f126e0d363bef4f6a57b76a
+- https://shannon-explorer.somnia.network/tx/0xc216ae7b412ecd934409eaa4479cfe1b641e0151dc85570c347ee1ba5dda0c9f
 
-## Production / always-on worker
+Explorer helper in code: `explorerTxUrl()` / `SHANNON_EXPLORER_TX` in `src/lib/types.ts`.
 
-Use persistent disk for data JSON; not for serverless.
+## Hosting (Railway / Render / Docker)
 
-One operator path:
+This app needs an **always-on** process and a **persistent disk** for `data/*.json`. It is not suited to ephemeral serverless.
 
-Run build, next start, and the agent script on the same persistent host.
+Configs included (no live public URL claimed here unless you deploy yourself):
 
-- The package script named agent runs scripts/agent-loop.ts and loads project-root .env so values match Next.
-- GET /api/status is read-only and exposes agentHeartbeatAt for stall detection.
-- Public /api/agent/tick requires auth and must not be a second open scheduler.
-- Pause/focus UI controls need matching public and server desk tokens.
+| File | Purpose |
+| --- | --- |
+| `Dockerfile` | Multi-stage Node 22 image; `CMD` runs `scripts/start-all.sh` |
+| `railway.toml` | Railway Docker build; mount a volume at `/app/data` |
+| `render.yaml` | Render Node blueprint; disk at project data dir; start via start:all |
+| `scripts/start-all.sh` | Next in background + agent-loop in foreground (trap cleanup) |
 
+Package scripts:
 
-## Env
+- `start` — Next only
+- `agent` — agent-loop only
+- `start:all` — both (hosting entrypoint)
 
-- PRIVATE_KEY — optional (not required for users)
-- NETWORK=testnet
-- DRY_RUN=true
-- AGENT_TRADE=false — keep false for signal-only agent
-- EDGE_DESK_SECRET — optional; gates custodial copy/claim and operator mutations (pause/focus/tick)
-- NEXT_PUBLIC_EDGE_DESK_SECRET — same value when enabling UI operator controls (never commit real secrets)
-- EDGE_THRESHOLD=0.05
-- COPY_SIZE=1
-- VENUE_ID — testnet venue default in .env.example
-- PREFERRED_ASSET=BTC
-- PREFERRED_INTERVAL_SEC=900
+Build from the repo container file, publish port 3000, mount persistent storage on `/app/data`, and inject env from `.env.example` via the host secret store. Use `railway.toml` on Railway and `render.yaml` on Render.
 
-## Gotchas respected
+Keep `AGENT_TRADE=false` unless you intentionally want server-side IOC from `PRIVATE_KEY`.
 
-- Gate writes on on-chain status === 1 (Trading)
-- Key by marketId / symbol, never pool address
-- IOC for takers (connected wallet)
-- Voided: redeem both sides at 0.5
-- Settled via listBinaryMarkets status Finalized
+## Env reference
+
+See `.env.example`. Important knobs:
+
+| Var | Default / notes |
+| --- | --- |
+| `NETWORK` | `testnet` |
+| `DRY_RUN` | `true` |
+| `AGENT_TRADE` | `false` (server IOC off) |
+| `EDGE_DESK_SECRET` / `NEXT_PUBLIC_EDGE_DESK_SECRET` | operator + local demo |
+| `EDGE_THRESHOLD` | `0.05` |
+| `COPY_SIZE` | `1` |
+| `VENUE_ID` | testnet venue in example |
+| `PREFERRED_ASSET` / `PREFERRED_INTERVAL_SEC` | `BTC` / `900` |
+| `AGENT_INTERVAL_MS` | `8000` |
+| `PRIVATE_KEY` | optional; users do not need it |
 
 ## Quality gates
 
-Lint, build, and regression scripts must pass; GitHub Actions runs them on push and PR.
+Run lint, production build, and the stage1-3 verify scripts before submit. GitHub Actions (`.github/workflows/ci.yml`) runs the same on push/PR.
 
-## Known limitations
+Pushing workflow file changes may require a **workflow-scoped** GitHub token; a normal `contents` token can fail.
 
-- Filesystem JSON store requires persistent disk; unsuitable for typical ephemeral serverless.
-- Production dependency audit may report transitive findings; triage by reachability before blind upgrades.
-- Model output is an experimental heuristic, not a calibrated probability.
+## Known limitations (honest)
+
+- **Model**: experimental spot-vs-book heuristic — **not** a calibrated probability; do not treat edge percent as P(win).
+- **Book**: top-of-book mid/ask awareness; **not** full depth / size-aware impact beyond current cost checks.
+- **Hosting**: filesystem JSON store needs persistent disk; unsuitable for typical serverless.
+- **CI**: workflow commits may need a workflow-scoped token to push.
+- **Indexer / portfolio**: indexer-backed portfolio views can have gaps vs on-chain truth; reconcile against wallet + explorer when unsure.
+- **Agent vs UI**: UI does not start the agent; you must run the agent script or `start:all`.
+- **Demo URL**: no deployed app URL is claimed in this README unless you add one after a real deploy.
+- **Dependencies**: production audit may report transitive findings — triage by reachability before blind upgrades.
+
+## Stack
+
+Next.js App Router, TypeScript, Tailwind, `@somnia-chain/markets-sdk` >= 0.29.0, viem, wagmi v2, React Query. Event contracts via SDK only (no DreamDEX HTTP API).
 
 ## License
 
-MIT
+MIT — see `LICENSE`.
