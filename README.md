@@ -63,7 +63,7 @@ Key by `marketId` / symbol — never pool address. Gate writes on on-chain Tradi
 
 ## Demo video
 
-A silent ~2–3 minute walkthrough exists **locally** for the submitter (`demo/` is gitignored). There is **no public video URL in this repo**. Attach the file on the DoraHacks submission form rather than inventing a link.
+Demo is submitted on DoraHacks as a **YouTube link** (not stored in this repository). Do not commit video files here.
 
 ## Transaction evidence (Shannon testnet)
 
