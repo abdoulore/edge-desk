@@ -13,6 +13,7 @@ import {
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import ConnectButton from "@/wallet/ConnectButton";
 import BrandLogo from "@/components/BrandLogo";
+import { formatModeLabel, formatModeTitle } from "@/lib/uiCopy";
 
 const NAV = [
   { href: "/app/desk", label: "Desk", icon: ChartLine },
@@ -27,12 +28,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const { status } = useDeskStatus({ pollMs: 12000, autoTick: false });
 
   const modeLabel = status
-    ? status.paused
-      ? "PAUSED"
-      : status.dryRun
-        ? "SIGNAL"
-        : "LIVE"
+    ? formatModeLabel({ paused: status.paused, dryRun: status.dryRun })
     : "...";
+  const modeTitle = status
+    ? formatModeTitle({ paused: status.paused, dryRun: status.dryRun })
+    : undefined;
 
   return (
     <div className="min-h-dvh bg-desk-bg">
@@ -46,6 +46,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </span>
             </Link>
             <span
+              title={modeTitle}
               className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${
                 status?.paused
                   ? "border-desk-warn/40 text-desk-warn"
@@ -72,8 +73,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
           </div>
           <div className="flex items-center gap-2">
             {status?.agentStalled && (
-              <span className="hidden rounded-full border border-desk-down/40 px-2 py-0.5 text-[10px] text-desk-down md:inline">
-                agent stale
+              <span
+                className="hidden rounded-full border border-desk-down/40 px-2 py-0.5 text-[10px] text-desk-down md:inline"
+                title="Signals aren't updating right now."
+              >
+                not updating
               </span>
             )}
             <ConnectButton />

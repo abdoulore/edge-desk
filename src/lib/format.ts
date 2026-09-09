@@ -23,9 +23,16 @@ export function fmtCountdown(expiry: number, nowMs = Date.now()): string {
 
 export function fmtInterval(sec: number | null | undefined): string {
   if (sec == null || !Number.isFinite(sec) || sec <= 0) return "-";
-  if (sec >= 86400) return `${Math.round(sec / 86400)}d`;
-  if (sec >= 3600) return `${Math.round(sec / 3600)}h`;
-  return `${Math.round(sec / 60)}m`;
+  if (sec >= 86400) {
+    const n = Math.round(sec / 86400);
+    return `${n} day${n === 1 ? "" : "s"}`;
+  }
+  if (sec >= 3600) {
+    const n = Math.round(sec / 3600);
+    return `${n} hour${n === 1 ? "" : "s"}`;
+  }
+  const n = Math.round(sec / 60);
+  return `${n} min`;
 }
 
 export function shortAddr(addr?: string | null, left = 6, right = 4): string {

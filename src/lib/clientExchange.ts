@@ -82,7 +82,7 @@ export async function ensureMarketReady(
     if (chainId != null && chainId !== somniaShannon.id) {
       return {
         ok: false,
-        message: `Wrong chain ${chainId} — expected Shannon ${somniaShannon.id}`,
+        message: `Switch your wallet to Somnia Shannon to continue.`,
       };
     }
   } catch {
@@ -184,7 +184,7 @@ export async function redeemWithWallet(
   marketId: string,
 ): Promise<{ ok: boolean; txs: string[]; message: string }> {
   const me = exchange.walletAddress;
-  if (!me) return { ok: false, txs: [], message: "Wallet not connected" };
+  if (!me) return { ok: false, txs: [], message: "Connect your wallet to claim." };
 
   const oc = await exchange.client.getMarketOnchain(marketId as `0x${string}`);
   const anyOc = oc as unknown as {
@@ -200,7 +200,7 @@ export async function redeemWithWallet(
   const isResolved = Boolean(anyOc.isResolved) || Number(anyOc.status) === 4;
   const isVoided = Boolean(anyOc.isVoided) || Number(anyOc.status) === 5;
   if (!isResolved && !isVoided) {
-    return { ok: false, txs: [], message: "Market not Resolved/Voided yet" };
+    return { ok: false, txs: [], message: "This market isn't ready to claim yet. Wait until it is finalized." };
   }
 
   const trader = exchange.trader as unknown as {
@@ -232,7 +232,7 @@ export async function redeemWithWallet(
   }
 
   if (toClaim.length === 0) {
-    return { ok: true, txs: [], message: "Nothing to claim on this market" };
+    return { ok: true, txs: [], message: "No winnings are ready to claim on this market." };
   }
 
   const txs: string[] = [];
@@ -247,7 +247,7 @@ export async function redeemWithWallet(
     if (res.receipt?.status === "reverted") throw new Error("redeem reverted");
     if (res.receipt?.transactionHash) txs.push(res.receipt.transactionHash);
   }
-  return { ok: true, txs, message: `Redeemed ${toClaim.length} outcome(s)` };
+  return { ok: true, txs, message: toClaim.length === 1 ? "Your claim was submitted successfully." : `Claimed ${toClaim.length} eligible positions.` };
 }
 
 export async function readFocusedBalances(

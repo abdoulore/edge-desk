@@ -1,17 +1,17 @@
-/node_modules
-/.next/
-/out/
-/build
+
+!/data/.gitkeep
+# Demo assets (local only)
+# Internal (keep local only)
+*.tsbuildinfo
 .DS_Store
 .env
 .env*.local
+/.next/
+/build
 /data/*.json
-!/data/.gitkeep
-*.tsbuildinfo
-
-# Internal (keep local only)
+/node_modules
+/out/
+COPY-OVERHAUL.md
 DEMO.md
 FEEDBACK.md
-
-# Demo assets (local only)
 demo/

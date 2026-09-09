@@ -39,7 +39,7 @@ export default function ConnectButton() {
         title={error?.message}
       >
         <Wallet size={13} weight="bold" />
-        {isPending ? "Connecting..." : "Connect"}
+        {isPending ? "Connecting..." : "Connect wallet"}
       </button>
     );
   }
@@ -56,14 +56,14 @@ export default function ConnectButton() {
           className="inline-flex h-8 items-center gap-1 rounded-desk-sm border border-desk-warn/40 px-2 text-[11px] text-desk-warn"
         >
           <ArrowsLeftRight size={12} />
-          {switching ? "Switching..." : "Shannon"}
+          {switching ? "Switching..." : "Switch network"}
         </button>
       )}
       <button
         type="button"
         onClick={() => disconnect()}
         className="inline-flex h-8 items-center rounded-desk-sm border border-desk-border bg-black/30 px-2.5 font-mono text-[11px] text-desk-ink tabular hover:border-desk-accent/40"
-        title="Disconnect"
+        title="Disconnect wallet"
       >
         {shortAddr(address)}
       </button>

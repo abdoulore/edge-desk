@@ -6,6 +6,7 @@ import {
   hasClientOperatorSecret,
   operatorFetchHeaders,
 } from "@/lib/operatorSecret";
+import { toUserMessage } from "@/lib/userError";
 
 export function useDeskStatus(opts?: {
   pollMs?: number;
@@ -26,7 +27,7 @@ export function useDeskStatus(opts?: {
       setStatus(json);
       setError(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Status fetch failed");
+      setError(toUserMessage(e, "status"));
     } finally {
       setLoading(false);
     }
@@ -34,7 +35,9 @@ export function useDeskStatus(opts?: {
 
   const tick = useCallback(async () => {
     if (!hasClientOperatorSecret()) {
-      setError("Operator secret not configured — cannot force tick");
+      setError(
+        "Manual signal checks are disabled on this deployment. Signals will continue to update automatically when the signal process is running.",
+      );
       return;
     }
     setBusy("tick");
@@ -48,11 +51,11 @@ export function useDeskStatus(opts?: {
         ok?: boolean;
       };
       if (!res.ok) {
-        setError(json.message || `Tick failed (${res.status})`);
+        setError(toUserMessage(json.message || `Tick failed (${res.status})`, "tick"));
       }
       await refresh();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Tick failed");
+      setError(toUserMessage(e, "tick"));
     } finally {
       setBusy(null);
     }

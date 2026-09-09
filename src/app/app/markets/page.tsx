@@ -6,6 +6,7 @@ import { ArrowsClockwise } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import { Badge, Panel, StateBlock, PageHeader } from "@/components/ui";
 import { fmtCountdown, fmtInterval, fmtPct } from "@/lib/format";
+import { UI_COPY, formatMarketStatus } from "@/lib/uiCopy";
 
 export default function MarketsPage() {
   const { status, loading, error, refresh } = useDeskStatus({ pollMs: 10000 });
@@ -17,11 +18,21 @@ export default function MarketsPage() {
   }, []);
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading markets..." />;
+    return (
+      <StateBlock
+        kind="loading"
+        title="Loading markets..."
+        detail="Getting active DreamDEX markets."
+      />
+    );
   }
   if (error && !status) {
     return (
-      <StateBlock kind="error" title="Could not load markets" detail={error} />
+      <StateBlock
+        kind="error"
+        title="We couldn't load active markets"
+        detail="Try refreshing the page."
+      />
     );
   }
 
@@ -32,7 +43,7 @@ export default function MarketsPage() {
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
       <PageHeader
         kicker="Markets"
-        title="Live binary windows"
+        title="Active markets"
         action={
           <button
             type="button"
@@ -44,12 +55,15 @@ export default function MarketsPage() {
           </button>
         }
       />
+      <p className="-mt-2 text-sm text-desk-muted">
+        Short BTC and ETH Up/Down markets currently available on DreamDEX.
+      </p>
 
       {markets.length === 0 ? (
         <StateBlock
           kind="empty"
-          title="No markets in cache yet"
-          detail="Run a desk tick to populate live binary markets from the venue."
+          title={UI_COPY.noMarkets}
+          detail={UI_COPY.noMarketsDetail}
         />
       ) : (
         <Panel className="!p-0 overflow-hidden">
@@ -73,12 +87,17 @@ export default function MarketsPage() {
                         <Badge
                           tone={m.status === "Trading" ? "up" : "neutral"}
                         >
-                          {m.status}
+                          {formatMarketStatus(m.status)}
                         </Badge>
-                        {active && <Badge tone="cyan">focused</Badge>}
+                        {active && (
+                          <Badge tone="cyan">{UI_COPY.currentMarket}</Badge>
+                        )}
                       </div>
-                      <p className="mt-1 truncate font-mono text-[11px] text-desk-muted">
-                        {m.symbol || m.marketId}
+                      <p
+                        className="mt-1 truncate font-mono text-[11px] text-desk-muted"
+                        title={m.marketId}
+                      >
+                        {m.symbol || `Market ${m.marketId.slice(0, 12)}…`}
                       </p>
                     </div>
                     <div className="text-right">
@@ -86,7 +105,9 @@ export default function MarketsPage() {
                         {m.upMid != null ? fmtPct(m.upMid) : "-"}
                       </p>
                       {m.upMid == null && (
-                        <p className="text-[10px] text-desk-muted">no book</p>
+                        <p className="text-[10px] text-desk-muted">
+                          {UI_COPY.noPriceYet}
+                        </p>
                       )}
                       <p
                         className="font-mono text-[11px] text-desk-muted tabular"

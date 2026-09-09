@@ -48,7 +48,7 @@ function checkFillLabels() {
   );
 
   assert(
-    fillActivityTitle("Up", "signal") === "Up signal (dry)",
+    fillActivityTitle("Up", "signal") === "Up signal",
     "dry title is signal not fill",
   );
   assert(
@@ -56,12 +56,12 @@ function checkFillLabels() {
     "does not title dry-run as fill (dry)",
   );
   assert(
-    fillActivityTitle("Down", "zero-fill") === "Down zero-fill",
+    fillActivityTitle("Down", "zero-fill") === "Down order did not fill",
     "zero-fill title",
   );
   assert(
-    fillActivityTitle("Up", "full", 1).includes("filled qty"),
-    "full mentions filled qty",
+    fillActivityTitle("Up", "full", 1).toLowerCase().includes("filled"),
+    "full mentions filled",
   );
 }
 

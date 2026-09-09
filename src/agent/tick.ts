@@ -530,21 +530,21 @@ export async function claimMarket(marketId: string): Promise<{
 }> {
   const cfg = getConfig();
   if (cfg.dryRun) {
-    return { ok: true, txs: [], message: "DRY_RUN: would redeem claimable outcomes" };
+    return { ok: true, txs: [], message: "Signal-only mode: would claim eligible positions (no transaction sent)." };
   }
   if (!cfg.privateKey) {
-    return { ok: false, txs: [], message: "PRIVATE_KEY required for server claim — use connected wallet instead" };
+    return { ok: false, txs: [], message: "Server claim is unavailable. Claim from your connected wallet instead." };
   }
 
   const exchange = getExchange();
   const me = (exchange as unknown as { walletAddress?: string }).walletAddress;
-  if (!me) return { ok: false, txs: [], message: "No wallet on exchange" };
+  if (!me) return { ok: false, txs: [], message: "No automation wallet is configured for server claims." };
 
   const oc = await exchange.client.getMarketOnchain(marketId as `0x${string}`);
   const isResolved = Boolean((oc as unknown as { isResolved?: boolean }).isResolved) || Number((oc as unknown as { status?: number }).status) === 4;
   const isVoided = Boolean((oc as unknown as { isVoided?: boolean }).isVoided) || Number((oc as unknown as { status?: number }).status) === 5;
   if (!isResolved && !isVoided) {
-    return { ok: false, txs: [], message: "Market not Resolved/Voided yet" };
+    return { ok: false, txs: [], message: "This market isn't ready to claim yet. Wait until it is finalized." };
   }
 
   const trader = exchange.trader as unknown as {
@@ -579,7 +579,7 @@ export async function claimMarket(marketId: string): Promise<{
   }
 
   if (toClaim.length === 0) {
-    return { ok: true, txs: [], message: "Nothing to claim on this market" };
+    return { ok: true, txs: [], message: "No winnings are ready to claim on this market." };
   }
 
   const txs: string[] = [];
@@ -599,12 +599,12 @@ export async function claimMarket(marketId: string): Promise<{
   await appendActivity({
     kind: "claim",
     at: new Date().toISOString(),
-    title: `Claimed ${toClaim.length} outcome(s)`,
+    title: toClaim.length === 1 ? "Claim completed" : `Claimed ${toClaim.length} eligible positions`,
     detail: txs.length ? `txs: ${txs.join(", ")}` : undefined,
     marketId,
     txHash: txs[0],
   });
-  return { ok: true, txs, message: `Redeemed ${toClaim.length} outcome(s)` };
+  return { ok: true, txs, message: toClaim.length === 1 ? "Your claim was submitted successfully." : `Claimed ${toClaim.length} eligible positions.` };
 }
 
 export async function copyLastTrade(): Promise<{
@@ -619,7 +619,7 @@ export async function copyLastTrade(): Promise<{
   if (!signal || !side) {
     return {
       ok: false,
-      message: "No current qualifying recommendation to trade",
+      message: "The current market does not meet the edge threshold. Wait for the next signal.",
     };
   }
   if (
@@ -654,7 +654,7 @@ export async function copyLastTrade(): Promise<{
       size,
       price: limit,
       edge: signal.edge ?? 0,
-      reason: `Copy (dry-run): mirror agent ${side} @ ${limit.toFixed(3)}`,
+      reason: `Signal-only copy of ${side} @ ${limit.toFixed(3)} — no automatic trade placed.`,
       dryRun: true,
       at: new Date().toISOString(),
       filledQty: 0,
@@ -664,7 +664,7 @@ export async function copyLastTrade(): Promise<{
     await appendActivity({
       kind: "copy",
       at: trade.at,
-      title: `Copy ${trade.side} signal (dry)`,
+      title: `${trade.side} signal generated`,
       detail: trade.reason,
       marketId: trade.marketId,
       asset: signal.asset,
@@ -674,11 +674,11 @@ export async function copyLastTrade(): Promise<{
       fillStatus: "signal",
       filledQty: 0,
     });
-    return { ok: true, message: "DRY_RUN copy recorded as signal (dry)", trade };
+    return { ok: true, message: `${trade.side} signal generated. No automatic trade was placed.`, trade };
   }
 
   if (!cfg.privateKey) {
-    return { ok: false, message: "PRIVATE_KEY required for server copy — use connected wallet instead" };
+    return { ok: false, message: "Server trading is unavailable. Trade from your connected wallet instead." };
   }
 
   const exchange = getExchange();
@@ -686,7 +686,7 @@ export async function copyLastTrade(): Promise<{
     signal.marketId as `0x${string}`,
   );
   if (Number((onchain as { status?: number }).status) !== 1) {
-    return { ok: false, message: "Market not in Trading status — cannot copy" };
+    return { ok: false, message: "This market is no longer open for trading. Refresh to find another active market." };
   }
 
   const result = await placeIoc(exchange, symbol, side, size, limit);
@@ -706,8 +706,8 @@ export async function copyLastTrade(): Promise<{
     edge: signal.edge ?? 0,
     reason:
       fillStatus === "zero-fill"
-        ? `Copy ${side} submitted but filled qty 0`
-        : `Copied agent ${side}`,
+        ? `Your ${side} order was submitted, but nothing filled at the available price.`
+        : `Mirrored Edge Desk ${side} signal.`,
     txHash: result.txHash,
     dryRun: false,
     at: new Date().toISOString(),
@@ -718,7 +718,7 @@ export async function copyLastTrade(): Promise<{
   await appendActivity({
     kind: "copy",
     at: trade.at,
-    title: `Copy ${fillActivityTitle(trade.side, fillStatus, filledQty)}`,
+    title: fillActivityTitle(trade.side, fillStatus, filledQty),
     detail: trade.reason,
     marketId: trade.marketId,
     asset: signal.asset,
@@ -734,12 +734,12 @@ export async function copyLastTrade(): Promise<{
     ok,
     message:
       fillStatus === "zero-fill"
-        ? "Copy tx mined with zero fill"
+        ? "Your order was submitted, but nothing filled at the available price."
         : fillStatus === "partial"
-          ? `Copy partial fill qty ${filledQty}`
+          ? `Partial fill: ${filledQty} units.`
           : fillStatus === "full"
-            ? `Copy filled qty ${filledQty}`
-            : "Copy order submitted",
+            ? `Filled ${filledQty} units.`
+            : "Order submitted.",
     trade,
   };
 }
@@ -774,13 +774,13 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
         spotImpliedBias: null,
         edge: null,
         recommendedSide: null,
-        reason: "Agent paused",
+        reason: "Signal updates are paused.",
         dryRun: cfg.dryRun,
         edgeThreshold: cfg.edgeThreshold,
         copySize: cfg.copySize,
         lastTrade: null,
       }),
-      reason: "Agent paused — signal loop idle (resume in Settings).",
+      reason: "Signal updates are paused. Resume them in Settings.",
       dryRun: cfg.dryRun,
       updatedAt,
       preferredMissing: prev?.preferredMissing,
@@ -872,7 +872,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
 
     if (candidates.length === 0) {
       signal.reason =
-        "No live binary markets found for this venue — check VENUE_ID / NETWORK.";
+        "No active markets found right now. Edge Desk will keep checking.";
       await writeSignal(signal);
       await writeMeta({
         ...meta,
@@ -882,7 +882,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
       await appendActivity({
         kind: "tick",
         at: updatedAt,
-        title: "No live markets",
+        title: "No active markets",
         detail: signal.reason,
       });
       return signal;
@@ -925,8 +925,8 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
     if (!chosen || !onchain) {
       signal.reason =
         skippedNoSymbol > 0
-          ? "Trading markets found but none have resolvable Up/Down (#YES/#NO) symbols."
-          : "Live markets found but none currently on-chain Trading (status=1).";
+          ? "Active markets were found, but none are ready to trade yet."
+          : "Markets were found, but none are currently open for trading.";
       await writeSignal(signal);
       await writeMeta({
         ...meta,
@@ -940,7 +940,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
     const upSymbol = picked.upSymbol || chosen.upSymbol;
     const downSymbol = picked.downSymbol || chosen.downSymbol;
     if (!upSymbol) {
-      signal.reason = "Selected market has no Up outcome symbol.";
+      signal.reason = "This market is missing tradeable Up/Down outcomes. Trying another market.";
       signal.marketId = chosen.marketId;
       await writeSignal(signal);
       return signal;
@@ -1036,27 +1036,27 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
       signal.edge = null;
       signal.recommendedSide = null;
       if (spotStale) {
-        signal.reason = `${signal.asset} SDK spot is stale (${signal.spotUpdatedAt}) — refusing to trade on old prices.`;
+        signal.reason = `${signal.asset} spot data is stale, so Edge Desk will not generate a trade signal until a fresh price arrives.`;
       } else {
         const feedLabel =
           spotSource === "coingecko"
-            ? "CoinGecko (display only)"
-            : "no SDK spot feed";
+            ? "CoinGecko, display only"
+            : "unavailable from the primary feed";
         signal.reason =
           mid == null
-            ? `${signal.asset} book empty and ${feedLabel} — neutral, no trade signal.`
-            : `${signal.asset} spot from ${feedLabel}; refusing to invent edge for trading. Book mid ${((mid ?? 0) * 100).toFixed(1)}%. Connect SDK price feed for signals.`;
+            ? `${signal.asset} does not have enough market data yet, and spot is ${feedLabel}. No trade signal.`
+            : `${signal.asset} spot is ${feedLabel} and is not used for trade signals. Market midpoint ${((mid ?? 0) * 100).toFixed(1)}%. Waiting for the primary spot feed.`;
       }
     } else if (reference == null) {
       signal.spotImpliedBias = null;
       signal.edge = null;
       signal.recommendedSide = null;
-      signal.reason = `Waiting for ${signal.asset} opening/strike reference — no trade until settlement boundary is known.`;
+      signal.reason = `Waiting for the market's reference price before checking ${signal.asset} for an edge.`;
     } else if (spotForEdge == null) {
       signal.spotImpliedBias = null;
       signal.edge = null;
       signal.recommendedSide = null;
-      signal.reason = `Waiting for ${signal.asset} SDK spot — no trade signal.`;
+      signal.reason = `Waiting for a reliable ${signal.asset} spot price before checking for an edge.`;
     } else {
       const bias = spotImpliedBias(spotForEdge, reference);
       signal.spotImpliedBias = bias;
@@ -1150,7 +1150,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
                 edge: tradeEdge,
                 reason:
                   fillStatus === "zero-fill"
-                    ? `${signal.reason} (zero-fill)`
+                    ? `${signal.reason} The order was submitted, but nothing filled.`
                     : signal.reason,
                 txHash: res.txHash,
                 dryRun: false,
@@ -1178,7 +1178,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
     }
   } catch (e) {
     signal.error = e instanceof Error ? e.message : String(e);
-    signal.reason = `Agent tick error: ${signal.error}`;
+    signal.reason = "Edge Desk hit an error while updating the signal. It will retry on the next check.";
   }
 
   signal.updatedAt = new Date().toISOString();
@@ -1242,7 +1242,7 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
     await appendActivity({
       kind: "error",
       at: signal.updatedAt,
-      title: "Tick error",
+      title: "Signal update error",
       detail: signal.error,
       marketId: signal.marketId || undefined,
       asset: signal.asset,
@@ -1252,8 +1252,8 @@ async function runAgentTickUnlocked(): Promise<DeskSignal> {
       kind: "tick",
       at: signal.updatedAt,
       title: signal.recommendedSide
-        ? `Signal ${signal.recommendedSide}`
-        : `${signal.asset || "Market"} scan`,
+        ? `Buy ${signal.recommendedSide}`
+        : `${signal.asset || "Market"} update`,
       detail: signal.reason,
       marketId: signal.marketId || undefined,
       asset: signal.asset,

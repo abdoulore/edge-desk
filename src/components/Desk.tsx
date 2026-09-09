@@ -26,6 +26,14 @@ import {
   operatorFetchHeaders,
 } from "@/lib/operatorSecret";
 import { readWalletExecution } from "@/lib/walletExecution";
+import {
+  UI_COPY,
+  formatFillStatusLabel,
+  formatMarketStatus,
+  preferredMissingCopy,
+  spotSourceSub,
+} from "@/lib/uiCopy";
+import { toUserMessage } from "@/lib/userError";
 
 export default function Desk() {
   const search = useSearchParams();
@@ -69,7 +77,7 @@ export default function Desk() {
   useEffect(() => {
     if (!focusMarket) return;
     if (!hasClientOperatorSecret()) {
-      setToast("Operator secret not configured — focus not applied");
+      setToast(UI_COPY.manualUnavailable);
       return;
     }
     void fetch("/api/focus", {
@@ -79,7 +87,7 @@ export default function Desk() {
     }).then(async (res) => {
       if (!res.ok) {
         const json = (await res.json().catch(() => ({}))) as { message?: string };
-        setToast(json.message || `Focus failed (${res.status})`);
+        setToast(toUserMessage(json.message || `Focus failed (${res.status})`, "focus"));
       }
       await refresh();
     });
@@ -132,21 +140,32 @@ export default function Desk() {
     return (
       <StateBlock
         kind="loading"
-        title="Connecting to desk..."
-        detail="Fetching /api/status"
+        title={UI_COPY.loadingDesk}
+        detail={UI_COPY.loadingDeskDetail}
       />
     );
   }
 
   if (error && !status) {
-    return <StateBlock kind="error" title="Desk offline" detail={error} />;
+    return (
+      <StateBlock
+        kind="error"
+        title={UI_COPY.deskUnavailable}
+        detail={UI_COPY.deskUnavailableDetail}
+      />
+    );
   }
+
+  const preferredLabel = fmtInterval(
+    status?.config?.preferredIntervalSec ?? 900,
+  );
+  const showingLabel = fmtInterval(signal?.intervalSec);
 
   return (
     <div className="mx-auto flex w-full max-w-2xl flex-col gap-4">
       <PageHeader
-        kicker="Trading desk"
-        title={`${signal?.asset || "-"} · ${fmtInterval(signal?.intervalSec)} window`}
+        kicker="Current market"
+        title={`${signal?.asset || "-"} · ${fmtInterval(signal?.intervalSec)}`}
         action={
           <button
             type="button"
@@ -154,49 +173,49 @@ export default function Desk() {
             disabled={actionBusy || !operatorConfigured}
             title={
               operatorConfigured
-                ? "Run one agent tick"
-                : "Operator secret not configured"
+                ? "Run one signal check now"
+                : UI_COPY.manualCheckUnavailableTitle
             }
             className="inline-flex items-center gap-1.5 rounded-desk-sm border border-desk-border bg-desk-panel px-3 py-1.5 text-xs text-desk-muted transition hover:text-desk-ink disabled:opacity-50"
           >
             <Lightning size={13} weight="fill" />
             {busy === "tick"
-              ? "Ticking..."
+              ? UI_COPY.checking
               : operatorConfigured
-                ? "Force signal"
-                : "Operator locked"}
+                ? UI_COPY.checkNow
+                : UI_COPY.manualCheckUnavailable}
           </button>
         }
       />
 
       {status?.paused && (
-        <Alert tone="warn">Agent paused. Resume in Settings.</Alert>
+        <Alert tone="warn">{UI_COPY.pausedAlert}</Alert>
       )}
 
       {status?.agentStalled && !status?.paused && (
-        <Alert tone="down">Agent not running (stale lastTickAt).</Alert>
+        <Alert tone="down">{UI_COPY.stalledAlert}</Alert>
       )}
 
       {(status?.preferredMissing || signal?.preferredMissing) && (
         <Alert tone="warn">
-          Preferred window missing - showing {fmtInterval(signal?.intervalSec)}.
+          {preferredMissingCopy(preferredLabel, showingLabel)}
         </Alert>
       )}
 
       {focusMarket &&
         signal?.marketId &&
         focusMarket.toLowerCase() !== signal.marketId.toLowerCase() && (
-          <Alert tone="warn">
-            Focus requested {focusMarket.slice(0, 12)}... - waiting for agent to
-            adopt.
-          </Alert>
+          <Alert tone="warn">{UI_COPY.switchingMarket}</Alert>
         )}
 
       <Panel>
         <div className="mb-3 flex items-center justify-between text-sm text-desk-muted">
-          <span className="font-mono text-xs tabular">
+          <span
+            className="font-mono text-xs tabular"
+            title={signal?.marketId || undefined}
+          >
             {signal?.marketId
-              ? `${signal.marketId.slice(0, 14)}...`
+              ? `Market ${signal.marketId.slice(0, 10)}…${signal.marketId.slice(-4)}`
               : "No market"}
           </span>
           <span className="font-mono text-xs tabular" suppressHydrationWarning>
@@ -205,7 +224,12 @@ export default function Desk() {
         </div>
 
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <Metric label="Up %" value={fmtPct(signal?.upMid)} accent />
+          <Metric
+            label="Up midpoint"
+            value={fmtPct(signal?.upMid)}
+            accent
+            title={UI_COPY.upMidpointTooltip}
+          />
           <Metric
             label="Edge"
             value={
@@ -214,45 +238,60 @@ export default function Desk() {
                 : `${signal.edge >= 0 ? "+" : ""}${fmtPct(signal.edge)}`
             }
             className={edgeColor}
+            title={UI_COPY.edgeTooltip}
           />
           <Metric
-            label="Spot"
+            label="Spot price"
             value={fmtNum(signal?.spot, 2)}
-            sub={
-              signal?.spotSource && signal.spotSource !== "sdk"
-                ? signal.spotSource
+            sub={spotSourceSub(signal?.spotSource)}
+            title={
+              signal?.spotSource === "coingecko"
+                ? UI_COPY.coinGeckoDisplayOnly
                 : undefined
             }
           />
-          <Metric label="Reference" value={fmtNum(signal?.reference, 2)} />
+          <Metric
+            label="Opening price"
+            value={fmtNum(signal?.reference, 2)}
+            title={UI_COPY.openingPriceTooltip}
+          />
         </div>
 
         <div className="mt-4 rounded-desk border border-desk-accent/20 bg-gradient-to-br from-desk-accent/5 to-transparent px-4 py-4">
-          <p className="mb-1.5 text-[11px] font-medium text-desk-accent">Why</p>
+          <p className="mb-1.5 text-[11px] font-medium text-desk-accent">
+            Why Edge Desk sees this
+          </p>
           <p className="text-[15px] leading-relaxed text-desk-ink">
-            {signal?.reason || "Waiting for first agent tick..."}
+            {signal?.reason || UI_COPY.waitingFirstSignal}
           </p>
         </div>
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Badge>{signal?.status || "-"}</Badge>
-          {signal?.recommendedSide && (
+          <Badge>{formatMarketStatus(signal?.status)}</Badge>
+          {signal?.recommendedSide ? (
             <Badge tone={signal.recommendedSide === "Up" ? "up" : "down"}>
-              Signal {signal.recommendedSide}
+              Buy {signal.recommendedSide}
             </Badge>
+          ) : (
+            <Badge>{UI_COPY.noSignal}</Badge>
           )}
           {signal?.spotImpliedBias != null && (
-            <Badge tone="cyan">Fair Up {fmtPct(signal.spotImpliedBias)}</Badge>
+            <Badge tone="cyan">
+              <span title={UI_COPY.fairUpTooltip}>
+                Fair Up {fmtPct(signal.spotImpliedBias)}
+              </span>
+            </Badge>
           )}
-          {signal?.spotSource === "sdk" && <Badge tone="cyan">SDK spot</Badge>}
           {signal?.spotSource === "coingecko" && (
-            <Badge tone="warn">CoinGecko display</Badge>
+            <Badge tone="warn">
+              <span title={UI_COPY.coinGeckoDisplayOnly}>Display only</span>
+            </Badge>
           )}
         </div>
       </Panel>
 
       {signal?.lastTrade && (
-        <Panel title="Last trade">
+        <Panel title="Latest Edge Desk signal">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-lg font-semibold">
@@ -272,8 +311,10 @@ export default function Desk() {
                 Edge {fmtPct(signal.lastTrade.edge)} ·{" "}
                 {fmtTime(signal.lastTrade.at)}
                 {" · "}
-                {signal.lastTrade.fillStatus ||
-                  (signal.lastTrade.dryRun ? "signal (dry)" : "submitted")}
+                {formatFillStatusLabel(
+                  signal.lastTrade.fillStatus ||
+                    (signal.lastTrade.dryRun ? "signal" : "submitted"),
+                )}
                 {signal.lastTrade.filledQty != null
                   ? ` · qty ${signal.lastTrade.filledQty}`
                   : ""}
@@ -287,9 +328,13 @@ export default function Desk() {
                 href={explorerTxUrl(signal.lastTrade.txHash)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex shrink-0 items-center gap-1 rounded-desk-sm border border-desk-accent/30 bg-desk-accent/5 px-3 py-2 font-mono text-xs text-desk-accent hover:underline"
+                className="inline-flex shrink-0 items-center gap-1 rounded-desk-sm border border-desk-accent/30 bg-desk-accent/5 px-3 py-2 text-xs text-desk-accent hover:underline"
+                title={signal.lastTrade.txHash}
               >
-                Tx {shortHash(signal.lastTrade.txHash)}
+                {UI_COPY.viewTransaction}
+                <span className="font-mono opacity-70">
+                  {shortHash(signal.lastTrade.txHash)}
+                </span>
                 <ArrowSquareOut size={12} />
               </a>
             )}
@@ -304,10 +349,10 @@ export default function Desk() {
           className="w-full py-3.5"
         >
           {tradeBusy === "copy"
-            ? "Trading..."
+            ? UI_COPY.placingTrade
             : isConnected
-              ? "Trade this signal"
-              : "Connect to trade"}
+              ? UI_COPY.tradeThisSignal
+              : UI_COPY.connectToTrade}
         </Btn>
         <Btn
           variant="secondary"
@@ -316,12 +361,12 @@ export default function Desk() {
           className="w-full py-3.5"
         >
           {tradeBusy === "claim"
-            ? "Claiming..."
+            ? UI_COPY.claiming
             : !hasClaimable
-              ? "Nothing to claim"
+              ? UI_COPY.nothingToClaim
               : isConnected
-                ? "Claim"
-                : "Connect to claim"}
+                ? UI_COPY.claim
+                : UI_COPY.connectToClaim}
         </Btn>
       </section>
 
@@ -333,7 +378,7 @@ export default function Desk() {
             rel="noreferrer"
             className="inline-flex items-center justify-center gap-1.5 rounded-desk-lg border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-accent transition hover:border-desk-accent/40"
           >
-            Oracle resolution graph
+            {UI_COPY.viewResolution}
             <ArrowSquareOut size={14} />
           </a>
         )}
@@ -341,12 +386,12 @@ export default function Desk() {
           href="/app/markets"
           className="rounded-desk-lg border border-desk-border bg-desk-panel px-4 py-3 text-center text-sm text-desk-muted transition hover:text-desk-ink"
         >
-          Browse markets
+          {UI_COPY.browseMarkets}
         </Link>
       </div>
 
       {walletExec && (
-        <Panel title="Last wallet execution">
+        <Panel title="Last wallet trade">
           <p className="text-sm">
             <span
               className={
@@ -355,18 +400,32 @@ export default function Desk() {
             >
               {walletExec.side}
             </span>{" "}
-            · {walletExec.fillStatus}
+            · {formatFillStatusLabel(walletExec.fillStatus)}
             {walletExec.filledQty != null
               ? ` · qty ${walletExec.filledQty}`
               : ""}{" "}
             · {fmtTime(walletExec.at)}
           </p>
           <p className="mt-1 text-xs text-desk-muted">{walletExec.message}</p>
+          {walletExec.txHash && (
+            <a
+              href={explorerTxUrl(walletExec.txHash)}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-2 inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
+            >
+              {UI_COPY.viewTransaction}
+              <span className="font-mono opacity-70">
+                {shortHash(walletExec.txHash)}
+              </span>
+              <ArrowSquareOut size={11} />
+            </a>
+          )}
         </Panel>
       )}
 
       {hasClaimable && (
-        <Panel title="Claimable (your wallet)">
+        <Panel title="Ready to claim">
           <ul className="space-y-2">
             {claimable.map((c) => (
               <li
@@ -375,10 +434,10 @@ export default function Desk() {
               >
                 <div>
                   <p>
-                    {c.asset} · {c.status}
+                    {c.asset} · {formatMarketStatus(c.status)}
                   </p>
                   <p className="font-mono text-xs text-desk-muted tabular">
-                    {c.marketId.slice(0, 10)}...
+                    Market {c.marketId.slice(0, 10)}…
                   </p>
                 </div>
                 <button
@@ -404,16 +463,20 @@ export default function Desk() {
           )}{" "}
           · size {signal?.copySize ?? status?.config?.copySize ?? 1} ·{" "}
           {status?.agentStalled
-            ? "stalled"
+            ? "not updating"
             : status?.paused
               ? "paused"
-              : "signal-only"}
+              : status?.dryRun
+                ? "signal only"
+                : "auto trade"}
         </p>
         <p suppressHydrationWarning>
           Updated {fmtTime(signal?.updatedAt)} ·{" "}
           {new Date(now).toLocaleTimeString()}
         </p>
-        {signal?.error && <p className="text-desk-down">{signal.error}</p>}
+        {signal?.error && (
+          <p className="text-desk-down">{toUserMessage(signal.error)}</p>
+        )}
         {error && <p className="text-desk-warn">{error}</p>}
       </footer>
 

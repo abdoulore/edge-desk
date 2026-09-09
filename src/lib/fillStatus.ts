@@ -17,6 +17,13 @@ export function classifyFill(opts: {
   return "full";
 }
 
+function formatQty(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return "?";
+  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+  return n.toFixed(4).replace(/\.?0+$/, "");
+}
+
+/** User-facing activity title for a fill status. Internal enums stay unchanged. */
 export function fillActivityTitle(
   side: Side,
   status: FillStatus,
@@ -24,44 +31,55 @@ export function fillActivityTitle(
 ): string {
   switch (status) {
     case "signal":
-      return `${side} signal (dry)`;
+      return `${side} signal`;
     case "submitted":
-      return `${side} submitted`;
+      return `${side} order submitted`;
     case "zero-fill":
-      return `${side} zero-fill`;
+      return `${side} order did not fill`;
     case "partial":
-      return `${side} filled qty ${formatQty(filledQty)}`;
+      return filledQty != null && Number.isFinite(filledQty)
+        ? `${side} partially filled (${formatQty(filledQty)})`
+        : `${side} partially filled`;
     case "full":
-      return `${side} filled qty ${formatQty(filledQty)}`;
+      return filledQty != null && Number.isFinite(filledQty)
+        ? `${side} order filled (${formatQty(filledQty)})`
+        : `${side} order filled`;
     default:
       return `${side} ${status}`;
   }
 }
 
-function formatQty(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return "?";
-  if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
-  return n.toFixed(4).replace(/\.?0+$/, "");
-}
-
+/** User-facing toast / result message. Do not append tx hashes here. */
 export function fillUserMessage(
   side: Side,
   status: FillStatus,
-  opts: { filledQty?: number | null; txHash?: string },
+  opts: {
+    filledQty?: number | null;
+    requestedQty?: number | null;
+    txHash?: string;
+  },
 ): string {
-  const short = opts.txHash ? ` · ${opts.txHash.slice(0, 10)}…` : "";
+  const qty = formatQty(opts.filledQty);
+  const req =
+    opts.requestedQty != null && Number.isFinite(opts.requestedQty)
+      ? formatQty(opts.requestedQty)
+      : null;
   switch (status) {
     case "signal":
-      return `Signal (dry) ${side}${short}`;
+      return `${side} signal generated. No automatic trade was placed.`;
     case "submitted":
-      return `Submitted ${side}${short}`;
+      return opts.txHash
+        ? `Your ${side} order was submitted. Open the transaction to confirm the final fill.`
+        : `${side} order submitted.`;
     case "zero-fill":
-      return `Zero-fill ${side} — tx mined, filled qty 0${short}`;
+      return `Your order was submitted, but nothing filled at the available price.`;
     case "partial":
-      return `Partial fill ${side} qty ${formatQty(opts.filledQty)}${short}`;
+      return req
+        ? `Your ${side} order partially filled: ${qty} of ${req} units.`
+        : `Your ${side} order partially filled: ${qty} units.`;
     case "full":
-      return `Filled ${side} qty ${formatQty(opts.filledQty)}${short}`;
+      return `Your ${side} order filled for ${qty} unit${qty === "1" ? "" : "s"}.`;
     default:
-      return `${side} ${status}${short}`;
+      return `${side} ${status}`;
   }
 }

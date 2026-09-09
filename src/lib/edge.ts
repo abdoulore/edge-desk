@@ -188,28 +188,36 @@ export function explainReason(args: {
     rejectedForCost,
   } = args;
   if (spot == null || reference == null) {
-    return `Waiting for ${asset} opening/strike reference — no trade until settlement boundary is known.`;
+    return `Waiting for the market's reference price before checking ${asset} for an edge.`;
   }
   if (mid == null) {
-    return `${asset} book is empty — no mid to compare against spot bias.`;
+    return `There isn't enough order-book data to price this ${asset} market yet, so Edge Desk is waiting.`;
   }
   if (bias == null || edge == null) {
-    return `Could not compute edge for ${asset}.`;
+    return `Edge Desk couldn't calculate a ${asset} edge from the current market data.`;
   }
   const movePct = (((spot - reference) / reference) * 100).toFixed(2);
   const dir = spot >= reference ? "above" : "below";
+  const fair = (bias * 100).toFixed(1);
+  const midPct = (mid * 100).toFixed(1);
+  const thresh = (threshold * 100).toFixed(0);
   if (rejectedForCost && execCost != null && execEdge != null) {
-    return `Spot is ${movePct}% ${dir} reference (fair Up ${(bias * 100).toFixed(1)}%) vs book mid ${(mid * 100).toFixed(1)}% (model edge ${(edge * 100).toFixed(1)}%), but executable ask ${(execCost * 100).toFixed(1)}% leaves only ${(execEdge * 100).toFixed(1)}% — below ${(threshold * 100).toFixed(0)}% threshold, so no trade.`;
+    const sideLabel = edge >= 0 ? "Up" : "Down";
+    return `${asset} is ${movePct}% ${dir} the reference price. Edge Desk estimates Fair Up at ${fair}%, while the market midpoint is ${midPct}%. The available ${sideLabel} price is ${(execCost * 100).toFixed(1)}%, leaving only ${(execEdge * 100).toFixed(1)}% executable edge, below the ${thresh}% threshold. No trade.`;
   }
   if (!side) {
-    return `Spot is ${movePct}% ${dir} reference (fair Up ${(bias * 100).toFixed(1)}%) vs book mid ${(mid * 100).toFixed(1)}% — |model edge| ${(Math.abs(edge) * 100).toFixed(1)}% < ${(threshold * 100).toFixed(0)}% threshold, so no trade.`;
+    return `${asset} is ${movePct}% ${dir} the reference price. Fair Up is ${fair}% and the market midpoint is ${midPct}%. The ${(Math.abs(edge) * 100).toFixed(1)}% gap is below the ${thresh}% threshold, so there is no signal right now.`;
+  }
+  if (side === "Up") {
+    const execBit =
+      execCost != null && execEdge != null
+        ? ` Up is available at ${(execCost * 100).toFixed(1)}%, leaving a ${(execEdge * 100).toFixed(1)}% executable edge.`
+        : "";
+    return `${asset} is ${movePct}% ${dir} the reference price. Fair Up is ${fair}% versus a ${midPct}% market midpoint.${execBit} Signal: Buy Up.`;
   }
   const execBit =
     execCost != null && execEdge != null
-      ? ` Executable ask ${(execCost * 100).toFixed(1)}% → +${(execEdge * 100).toFixed(1)}% net.`
+      ? ` Down is available at ${(execCost * 100).toFixed(1)}%, leaving a ${(execEdge * 100).toFixed(1)}% executable edge.`
       : "";
-  if (side === "Up") {
-    return `Spot is ${movePct}% ${dir} reference so fair Up is ${(bias * 100).toFixed(1)}%, book mid ${(mid * 100).toFixed(1)}% (model +${(edge * 100).toFixed(1)}%).${execBit} Buying Up.`;
-  }
-  return `Spot is ${movePct}% ${dir} reference so fair Up is ${(bias * 100).toFixed(1)}%, book mid ${(mid * 100).toFixed(1)}% (model ${((edge ?? 0) * 100).toFixed(1)}%).${execBit} Buying Down.`;
+  return `${asset} is ${movePct}% ${dir} the reference price. Fair Up is ${fair}%, while the market midpoint is ${midPct}%.${execBit} Signal: Buy Down.`;
 }

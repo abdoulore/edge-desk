@@ -13,15 +13,20 @@ export function Metric({
   accent,
   className = "",
   sub,
+  title,
 }: {
   label: string;
   value: string;
   accent?: boolean;
   className?: string;
   sub?: string;
+  title?: string;
 }) {
   return (
-    <div className="rounded-desk-sm border border-desk-border/80 bg-black/25 px-3 py-2.5">
+    <div
+      className="rounded-desk-sm border border-desk-border/80 bg-black/25 px-3 py-2.5"
+      title={title}
+    >
       <p className="text-[11px] font-medium text-desk-muted">{label}</p>
       <p
         className={`mt-0.5 font-mono text-xl font-semibold tabular ${

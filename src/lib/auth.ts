@@ -8,12 +8,12 @@ export function requireDeskSecret(req: Request): { ok: true } | { ok: false; sta
       ok: false,
       status: 403,
       message:
-        "Server custodial mutations are disabled. Connect your Shannon wallet and trade client-side.",
+        "Manual server controls are unavailable on this deployment. Trade from your connected wallet instead.",
     };
   }
   const header = req.headers.get("x-edge-desk-secret") || "";
   if (header !== cfg.edgeDeskSecret) {
-    return { ok: false, status: 401, message: "Unauthorized — missing or invalid x-edge-desk-secret" };
+    return { ok: false, status: 401, message: "This control is unavailable on this deployment." };
   }
   return { ok: true };
 }

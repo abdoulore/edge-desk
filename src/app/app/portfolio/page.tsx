@@ -28,6 +28,7 @@ import {
   type WalletExecution,
 } from "@/lib/walletExecution";
 import { explorerTxUrl, type ClaimablePosition, type WalletOpenPosition } from "@/lib/types";
+import { formatFillStatusLabel, formatMarketStatus } from "@/lib/uiCopy";
 
 export default function PortfolioPage() {
   // All hooks must run unconditionally on every render (React #310).
@@ -86,7 +87,7 @@ export default function PortfolioPage() {
       if (!view) {
         setOpenPositions([]);
         setClaimable([]);
-        setPortfolioError("Could not load wallet portfolio from indexer");
+        setPortfolioError("We couldn't load your positions. Try again.");
       } else {
         setOpenPositions(view.openPositions);
         setClaimable(view.claimable);
@@ -106,11 +107,21 @@ export default function PortfolioPage() {
   const showError = Boolean(error && !status);
 
   if (showLoading) {
-    return <StateBlock kind="loading" title="Loading portfolio..." />;
+    return (
+      <StateBlock
+        kind="loading"
+        title="Loading portfolio..."
+        detail="Getting your positions and claimable balances."
+      />
+    );
   }
   if (showError) {
     return (
-      <StateBlock kind="error" title="Portfolio unavailable" detail={error ?? undefined} />
+      <StateBlock
+        kind="error"
+        title="Portfolio unavailable"
+        detail="We couldn't load portfolio data. Try refreshing."
+      />
     );
   }
 
@@ -132,17 +143,17 @@ export default function PortfolioPage() {
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
-      <PageHeader kicker="Portfolio" title="Positions and claims" />
+      <PageHeader kicker="Portfolio" title="Your positions" />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <MiniStat label="Focused" value={signal?.asset || "-"} />
+        <MiniStat label="Current market" value={signal?.asset || "-"} />
         <MiniStat
-          label="Claimable"
+          label="Ready to claim"
           value={String(claimable.length)}
           accent={claimable.length > 0}
         />
         <MiniStat
-          label="Open holdings"
+          label="Open positions"
           value={isConnected ? String(openNonClaim.length) : "-"}
         />
       </div>
@@ -150,20 +161,21 @@ export default function PortfolioPage() {
       {!isConnected && (
         <StateBlock
           kind="empty"
-          title="Connect wallet"
-          detail="Portfolio and claimables are scoped to your connected Shannon address — not the optional server wallet."
+          title="Connect your wallet"
+          detail="Connect your wallet to see your positions and anything ready to claim. This page shows positions for your connected wallet, not the optional automation wallet."
         />
       )}
 
-      <Panel title="Open focus">
+      <Panel title="Current market">
         {signal?.marketId ? (
           <div className="space-y-2 text-sm">
             <p>
               <span className="text-desk-muted">Market · </span>
-              {signal.asset} {fmtInterval(signal.intervalSec)} · {signal.status}
+              {signal.asset} {fmtInterval(signal.intervalSec)} ·{" "}
+              {formatMarketStatus(signal.status)}
             </p>
             <p className="break-all font-mono text-xs text-desk-muted">
-              {signal.marketId}
+              Market {signal.marketId}
             </p>
             <p>
               <span className="text-desk-muted">Edge · </span>
@@ -172,51 +184,64 @@ export default function PortfolioPage() {
                   ? "-"
                   : `${signal.edge >= 0 ? "+" : ""}${fmtPct(signal.edge)}`}
               </span>
-              {signal.recommendedSide && (
+              {signal.recommendedSide ? (
                 <>
                   {" "}
                   <Badge
                     tone={signal.recommendedSide === "Up" ? "up" : "down"}
                   >
-                    {signal.recommendedSide}
+                    Buy {signal.recommendedSide}
                   </Badge>
+                </>
+              ) : (
+                <>
+                  {" "}
+                  <Badge>No signal</Badge>
                 </>
               )}
             </p>
             {isConnected && balances && (
               <p className="mt-2 font-mono text-xs text-desk-accent tabular">
-                Your outcomes · Up {balances.upBalance} · Down{" "}
+                Your balance: Up {balances.upBalance} · Down{" "}
                 {balances.downBalance}
               </p>
             )}
             {isConnected && !balances && (
               <p className="mt-2 text-xs text-desk-muted">
-                Reading outcome balances...
+                Checking your Up and Down balances...
               </p>
             )}
             {!isConnected && (
               <p className="mt-2 text-xs text-desk-muted">
-                Connect wallet to see outcome balances.
+                Connect your wallet to see your balance in this market.
               </p>
             )}
           </div>
         ) : (
-          <p className="text-sm text-desk-muted">No active market focus.</p>
+          <p className="text-sm text-desk-muted">
+            No market is selected right now.
+          </p>
         )}
       </Panel>
 
-      <Panel title="Your open positions">
+      <Panel title="Open positions">
         {!isConnected ? (
-          <p className="text-sm text-desk-muted">Connect to list holdings across markets.</p>
+          <p className="text-sm text-desk-muted">
+            Connect your wallet to see positions across all markets.
+          </p>
         ) : portfolioLoading && openPositions.length === 0 ? (
-          <StateBlock kind="loading" title="Loading positions..." />
+          <StateBlock kind="loading" title="Loading your positions..." />
         ) : portfolioError && openPositions.length === 0 ? (
-          <StateBlock kind="error" title="Portfolio read failed" detail={portfolioError} />
+          <StateBlock
+            kind="error"
+            title="We couldn't load your positions"
+            detail="Try again."
+          />
         ) : openNonClaim.length === 0 ? (
           <StateBlock
             kind="empty"
-            title="No open holdings"
-            detail="Non-zero outcome balances from the SDK portfolio API appear here (all markets, not only focus)."
+            title="No open positions"
+            detail="Positions will appear here after you trade an Up or Down market."
           />
         ) : (
           <ul className="space-y-2">
@@ -236,10 +261,13 @@ export default function PortfolioPage() {
                       {p.side}
                     </span>
                   </p>
-                  <Badge>{p.status}</Badge>
+                  <Badge>{formatMarketStatus(p.status)}</Badge>
                 </div>
-                <p className="mt-1 font-mono text-xs text-desk-muted tabular">
-                  Balance {p.balance} · {p.marketId.slice(0, 12)}…
+                <p className="mt-1 text-xs text-desk-muted">
+                  Position: {p.balance} {p.side}
+                </p>
+                <p className="mt-0.5 font-mono text-[11px] text-desk-muted/80 tabular">
+                  Market {p.marketId.slice(0, 12)}…
                 </p>
               </li>
             ))}
@@ -247,16 +275,16 @@ export default function PortfolioPage() {
         )}
       </Panel>
 
-      <Panel title="Claimable (your wallet)">
+      <Panel title="Ready to claim">
         {!isConnected ? (
           <p className="text-sm text-desk-muted">
-            Connect wallet — claims are never taken from the server wallet list.
+            Connect your wallet to see settled positions that are ready to claim.
           </p>
         ) : claimable.length === 0 ? (
           <StateBlock
             kind="empty"
-            title="Nothing claimable"
-            detail="Only winning or voided holdings with redeemable payout show here. Losing-only balances are not labeled claimable."
+            title="Nothing to claim yet"
+            detail="Winning and voided positions will appear here after settlement."
           />
         ) : (
           <ul className="space-y-3">
@@ -267,12 +295,12 @@ export default function PortfolioPage() {
               >
                 <div>
                   <p className="font-medium">
-                    {c.asset} · {c.status}
+                    {c.asset} · {formatMarketStatus(c.status)}
                   </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-desk-muted tabular">
-                    Up {c.upBalance} · Down {c.downBalance}
+                  <p className="mt-0.5 text-[11px] text-desk-muted tabular">
+                    Up balance {c.upBalance} · Down {c.downBalance}
                     {c.winningOutcome != null
-                      ? ` · win ${c.winningOutcome === 0 ? "Up" : "Down"}`
+                      ? ` · Winning side: ${c.winningOutcome === 0 ? "Up" : "Down"}`
                       : ""}
                   </p>
                   {c.oracleGraphUrl && (
@@ -282,7 +310,7 @@ export default function PortfolioPage() {
                       rel="noreferrer"
                       className="mt-1 inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
                     >
-                      Oracle graph
+                      View resolution
                       <ArrowSquareOut size={11} />
                     </a>
                   )}
@@ -293,7 +321,7 @@ export default function PortfolioPage() {
                   onClick={() => void onClaim(c.marketId)}
                   className="rounded-desk-sm bg-desk-accent px-3 py-1.5 text-xs font-semibold text-black transition active:scale-[0.98] disabled:opacity-50"
                 >
-                  {busy === "claim" ? "..." : isConnected ? "Claim" : "Connect"}
+                  {busy === "claim" ? "Claiming..." : "Claim"}
                 </button>
               </li>
             ))}
@@ -301,12 +329,12 @@ export default function PortfolioPage() {
         )}
       </Panel>
 
-      <Panel title="Last wallet execution">
+      <Panel title="Last wallet trade">
         {!walletExec ? (
           <StateBlock
             kind="empty"
-            title="No wallet trades this session"
-            detail="Browser Copy results (submitted / partial / full / zero-fill) appear here."
+            title="No wallet trades yet"
+            detail="Trades you place from this browser will appear here."
           />
         ) : (
           <div className="space-y-2 text-sm">
@@ -318,12 +346,11 @@ export default function PortfolioPage() {
               >
                 {walletExec.side}
               </span>{" "}
-              · {walletExec.fillStatus}
+              · {formatFillStatusLabel(walletExec.fillStatus)}
               {walletExec.fillStatus === "partial" ||
               walletExec.fillStatus === "full"
                 ? ` qty ${walletExec.filledQty}`
-                : ""}
-              {" "}
+                : ""}{" "}
               @ {fmtNum(walletExec.price, 3)}
             </p>
             <p className="text-desk-muted">
@@ -335,9 +362,10 @@ export default function PortfolioPage() {
                 href={explorerTxUrl(walletExec.txHash)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-xs text-desk-accent hover:underline"
+                className="inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
               >
-                {shortHash(walletExec.txHash)}
+                View transaction{" "}
+                <span className="font-mono">{shortHash(walletExec.txHash)}</span>
                 <ArrowSquareOut size={11} />
               </a>
             )}
@@ -345,12 +373,12 @@ export default function PortfolioPage() {
         )}
       </Panel>
 
-      <Panel title="Last agent signal / trade">
+      <Panel title="Latest Edge Desk signal">
         {!lastTrade ? (
           <StateBlock
             kind="empty"
-            title="No agent events yet"
-            detail="Dry signals and live fills from the agent appear here (not your wallet)."
+            title="No signals yet"
+            detail="The latest qualifying Edge Desk signal will appear here. Automatic trades shown here belong to the optional automation wallet, not your connected wallet."
           />
         ) : (
           <div className="space-y-2 text-sm">
@@ -362,7 +390,11 @@ export default function PortfolioPage() {
               >
                 {lastTrade.side}
               </span>{" "}
-              · {lastTrade.fillStatus || (lastTrade.dryRun ? "signal" : "submitted")}
+              ·{" "}
+              {formatFillStatusLabel(
+                lastTrade.fillStatus ||
+                  (lastTrade.dryRun ? "signal" : "submitted"),
+              )}
               {lastTrade.filledQty != null
                 ? ` · filled ${lastTrade.filledQty}`
                 : ` · size ${lastTrade.size}`}{" "}
@@ -370,7 +402,7 @@ export default function PortfolioPage() {
             </p>
             <p className="text-desk-muted">
               {fmtDateTime(lastTrade.at)} · edge {fmtPct(lastTrade.edge)}
-              {lastTrade.dryRun ? " · dry" : ""}
+              {lastTrade.dryRun ? " · signal only" : ""}
             </p>
             <p className="leading-relaxed text-desk-ink/85">{lastTrade.reason}</p>
             {lastTrade.txHash && (
@@ -378,9 +410,10 @@ export default function PortfolioPage() {
                 href={explorerTxUrl(lastTrade.txHash)}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 font-mono text-xs text-desk-accent hover:underline"
+                className="inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
               >
-                {shortHash(lastTrade.txHash)}
+                View transaction{" "}
+                <span className="font-mono">{shortHash(lastTrade.txHash)}</span>
                 <ArrowSquareOut size={11} />
               </a>
             )}

@@ -13,6 +13,7 @@ import {
   saveWalletExecution,
   type WalletExecution,
 } from "@/lib/walletExecution";
+import { toUserMessage } from "@/lib/userError";
 import type { DeskSignal, FillStatus, Side } from "@/lib/types";
 import { SHANNON_CHAIN_ID } from "@/wallet/config";
 
@@ -24,7 +25,8 @@ function resolveTradeSide(
   if (!current) {
     return {
       ok: false,
-      message: "No current qualifying recommendation — wait for a fresh signal",
+      message:
+        "The current market does not meet the edge threshold. Wait for the next signal.",
     };
   }
   if (
@@ -57,18 +59,30 @@ export function useWalletTrade() {
 
   const copyFromSignal = useCallback(
     async (signal: DeskSignal | null | undefined): Promise<WalletTradeResult> => {
-      if (!signal) return { ok: false, message: "No signal to trade" };
+      if (!signal) {
+        return { ok: false, message: "There is no active trade signal right now." };
+      }
       if (!isConnected || !address) {
-        return { ok: false, message: "Connect your Shannon wallet to trade" };
+        return { ok: false, message: "Connect your wallet to trade." };
       }
       if (chainId !== SHANNON_CHAIN_ID) {
-        return { ok: false, message: "Switch to Somnia Shannon (50312)" };
+        return {
+          ok: false,
+          message: "Switch your wallet to Somnia Shannon to continue.",
+        };
       }
       if (!walletClient) {
-        return { ok: false, message: "Wallet client unavailable" };
+        return {
+          ok: false,
+          message: "Your wallet isn't ready yet. Reconnect it and try again.",
+        };
       }
       if (!signal.marketId) {
-        return { ok: false, message: "Signal has no market binding" };
+        return {
+          ok: false,
+          message:
+            "This signal isn't linked to a tradable market. Refresh and try again.",
+        };
       }
 
       const resolved = resolveTradeSide(signal);
@@ -97,7 +111,11 @@ export function useWalletTrade() {
           signal.marketId as `0x${string}`,
         );
         if (Number((onchain as { status?: number }).status) !== 1) {
-          return { ok: false, message: "Market not in Trading status — cannot trade" };
+          return {
+            ok: false,
+            message:
+              "This market is no longer open for trading. Refresh to find another active market.",
+          };
         }
         const result = await placeIocWithWallet(
           exchange,
@@ -111,6 +129,7 @@ export function useWalletTrade() {
         const filledQty = Number.isFinite(result.filled) ? result.filled : 0;
         const message = fillUserMessage(side, fillStatus, {
           filledQty: Number.isFinite(result.filled) ? result.filled : null,
+          requestedQty: built.params.size,
           txHash: result.txHash,
         });
 
@@ -142,7 +161,7 @@ export function useWalletTrade() {
       } catch (e) {
         return {
           ok: false,
-          message: e instanceof Error ? e.message : "Trade failed",
+          message: toUserMessage(e, "trade"),
         };
       } finally {
         setBusy(null);
@@ -153,15 +172,23 @@ export function useWalletTrade() {
 
   const claimMarket = useCallback(
     async (marketId?: string) => {
-      if (!marketId) return { ok: false, message: "Nothing claimable yet" };
+      if (!marketId) {
+        return { ok: false, message: "No winnings are ready to claim yet." };
+      }
       if (!isConnected || !address) {
-        return { ok: false, message: "Connect your Shannon wallet to claim" };
+        return { ok: false, message: "Connect your wallet to claim." };
       }
       if (chainId !== SHANNON_CHAIN_ID) {
-        return { ok: false, message: "Switch to Somnia Shannon (50312)" };
+        return {
+          ok: false,
+          message: "Switch your wallet to Somnia Shannon to continue.",
+        };
       }
       if (!walletClient) {
-        return { ok: false, message: "Wallet client unavailable" };
+        return {
+          ok: false,
+          message: "Your wallet isn't ready yet. Reconnect it and try again.",
+        };
       }
       setBusy("claim");
       try {
@@ -170,7 +197,7 @@ export function useWalletTrade() {
       } catch (e) {
         return {
           ok: false,
-          message: e instanceof Error ? e.message : "Claim failed",
+          message: toUserMessage(e, "claim"),
         };
       } finally {
         setBusy(null);

@@ -5,6 +5,8 @@ import { useDeskStatus } from "@/hooks/useDeskStatus";
 import { Badge, Panel, StateBlock, PageHeader } from "@/components/ui";
 import { fmtDateTime, fmtPct, shortHash } from "@/lib/format";
 import { explorerTxUrl, type ActivityEvent } from "@/lib/types";
+import { formatActivityKind, formatFillStatusLabel } from "@/lib/uiCopy";
+import { fillActivityTitle } from "@/lib/fillStatus";
 
 function toneFor(kind: ActivityEvent["kind"]) {
   switch (kind) {
@@ -20,15 +22,45 @@ function toneFor(kind: ActivityEvent["kind"]) {
   }
 }
 
+function humanTitle(ev: ActivityEvent): string {
+  const title = ev.title || "";
+  if (/fill \(dry\)|signal \(dry\)/i.test(title)) {
+    return ev.side ? `${ev.side} signal generated` : "Signal generated";
+  }
+  if (/zero-fill/i.test(title)) {
+    return ev.side ? `${ev.side} order did not fill` : "Order did not fill";
+  }
+  if (/Claimed \d+ outcome/i.test(title)) {
+    return "Claim completed";
+  }
+  if (/^Tick error$/i.test(title)) {
+    return "Signal update error";
+  }
+  if (ev.fillStatus && ev.side) {
+    return fillActivityTitle(ev.side, ev.fillStatus, ev.filledQty);
+  }
+  return title;
+}
+
 export default function ActivityPage() {
   const { status, loading, error, refresh } = useDeskStatus({ pollMs: 8000 });
 
   if (loading && !status) {
-    return <StateBlock kind="loading" title="Loading activity..." />;
+    return (
+      <StateBlock
+        kind="loading"
+        title="Loading activity..."
+        detail="Getting recent signals, trades, and claims."
+      />
+    );
   }
   if (error && !status) {
     return (
-      <StateBlock kind="error" title="Activity unavailable" detail={error} />
+      <StateBlock
+        kind="error"
+        title="Activity unavailable"
+        detail="We couldn't load recent activity. Try refreshing."
+      />
     );
   }
 
@@ -42,15 +74,23 @@ export default function ActivityPage() {
         ? [
             {
               id: "last-trade",
-              kind: "trade",
+              kind: lastTrade.dryRun ? "tick" : "trade",
               at: lastTrade.at,
-              title: `${lastTrade.side} fill${lastTrade.dryRun ? " (dry)" : ""}`,
+              title: fillActivityTitle(
+                lastTrade.side,
+                lastTrade.fillStatus ||
+                  (lastTrade.dryRun ? "signal" : "submitted"),
+                lastTrade.filledQty,
+              ),
               detail: lastTrade.reason,
               marketId: lastTrade.marketId,
               side: lastTrade.side,
               edge: lastTrade.edge,
               txHash: lastTrade.txHash,
               dryRun: lastTrade.dryRun,
+              fillStatus:
+                lastTrade.fillStatus ||
+                (lastTrade.dryRun ? "signal" : "submitted"),
             },
           ]
         : [];
@@ -59,7 +99,7 @@ export default function ActivityPage() {
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
       <PageHeader
         kicker="Activity"
-        title="Recent ticks and fills"
+        title="Recent activity"
         action={
           <button
             type="button"
@@ -71,12 +111,15 @@ export default function ActivityPage() {
           </button>
         }
       />
+      <p className="-mt-2 text-sm text-desk-muted">
+        Signals, trades, and claims from this desk.
+      </p>
 
       {rows.length === 0 ? (
         <StateBlock
           kind="empty"
           title="No activity yet"
-          detail="Agent ticks, trades, copies, and claims will appear in a rolling history."
+          detail="Signals, trades, and claims will appear here as they happen."
         />
       ) : (
         <Panel className="!p-0 overflow-hidden">
@@ -86,12 +129,19 @@ export default function ActivityPage() {
                 <div className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-desk-accent/80" />
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-medium">{ev.title}</span>
-                    <Badge tone={toneFor(ev.kind)}>{ev.kind}</Badge>
+                    <span className="font-medium">{humanTitle(ev)}</span>
+                    <Badge tone={toneFor(ev.kind)}>
+                      {formatActivityKind(ev.kind)}
+                    </Badge>
                     {ev.side && (
                       <Badge tone={ev.side === "Up" ? "up" : "down"}>
                         {ev.side}
                       </Badge>
+                    )}
+                    {ev.fillStatus && (
+                      <span className="text-[11px] text-desk-muted">
+                        {formatFillStatusLabel(ev.fillStatus)}
+                      </span>
                     )}
                     {ev.edge != null && (
                       <span className="font-mono text-[11px] text-desk-muted tabular">
@@ -112,9 +162,10 @@ export default function ActivityPage() {
                         href={explorerTxUrl(ev.txHash)}
                         target="_blank"
                         rel="noreferrer"
-                        className="font-mono text-desk-accent hover:underline"
+                        className="text-desk-accent hover:underline"
                       >
-                        {shortHash(ev.txHash)}
+                        View transaction{" "}
+                        <span className="font-mono">{shortHash(ev.txHash)}</span>
                       </a>
                     )}
                   </div>

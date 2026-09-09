@@ -50,20 +50,20 @@ export function buildCopyOrderParams(
     bias,
     minEdge,
   } = input;
-  if (!side) return { ok: false, message: "No side to copy" };
-  if (!(size > 0)) return { ok: false, message: "Invalid size" };
+  if (!side) return { ok: false, message: "There is no side to trade right now." };
+  if (!(size > 0)) return { ok: false, message: "Trade size is invalid." };
 
   const floor = minEdge ?? 0;
 
   if (side === "Up") {
-    if (!upSymbol) return { ok: false, message: "Missing Up outcome symbol" };
-    if (upAsk == null) return { ok: false, message: "No Up ask to cross" };
+    if (!upSymbol) return { ok: false, message: "This signal is missing the Up market symbol. Refresh and try again." };
+    if (upAsk == null) return { ok: false, message: "There is no Up ask available to trade right now." };
     if (bias != null && Number.isFinite(bias)) {
       const execEdge = bias - upAsk;
       if (execEdge < floor) {
         return {
           ok: false,
-          message: `Executable Up ask ${upAsk.toFixed(3)} destroys edge (${execEdge.toFixed(3)} < ${floor})`,
+          message: `The available Up price no longer leaves enough edge (${(execEdge * 100).toFixed(1)}% < ${(floor * 100).toFixed(0)}%).`,
         };
       }
     }
@@ -85,12 +85,12 @@ export function buildCopyOrderParams(
     };
   }
 
-  if (!downSymbol) return { ok: false, message: "Missing Down outcome symbol" };
+  if (!downSymbol) return { ok: false, message: "This signal is missing the Down market symbol. Refresh and try again." };
   const ask = impliedDownAsk(upBid, downAsk ?? null);
   if (ask == null) {
     return {
       ok: false,
-      message: "No Down ask (missing Down book and Up bid — will not invent from Up ask)",
+      message: "There isn't a Down price available to trade right now.",
     };
   }
   if (bias != null && Number.isFinite(bias)) {
@@ -98,7 +98,7 @@ export function buildCopyOrderParams(
     if (execEdge < floor) {
       return {
         ok: false,
-        message: `Executable Down ask ${ask.toFixed(3)} destroys edge (${execEdge.toFixed(3)} < ${floor})`,
+        message: `The available Down price no longer leaves enough edge (${(execEdge * 100).toFixed(1)}% < ${(floor * 100).toFixed(0)}%).`,
       };
     }
   }
