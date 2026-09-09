@@ -19,6 +19,10 @@ export const metadata: Metadata = {
   title: "Edge Desk - DreamDEX Event Contracts",
   description:
     "Explainable rule-based trading desk for DreamDEX binary Event Contracts on Somnia Shannon.",
+  icons: {
+    icon: "/brand/logo-gap.png",
+    apple: "/brand/logo-gap.png",
+  },
 };
 
 export const viewport: Viewport = {

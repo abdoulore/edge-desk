@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import type { DeskStatus } from "@/lib/types";
 import { fmtPct, fmtTime } from "@/lib/format";
+import BrandLogo from "@/components/BrandLogo";
 
 const GITHUB = "https://github.com/abdoulore/edge-desk";
 
@@ -107,9 +108,7 @@ export default function LandingPage() {
 
       <header className="relative z-10 mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-5 md:px-8">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-desk-sm border border-desk-accent/30 bg-desk-accent/10 font-mono text-sm font-semibold text-desk-accent">
-            ed
-          </span>
+          <BrandLogo size={32} priority />
           <div>
             <p className="text-sm font-semibold tracking-tight">Edge Desk</p>
             <p className="text-[10px] text-desk-muted">Somnia × DreamDEX</p>

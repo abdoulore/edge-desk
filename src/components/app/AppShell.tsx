@@ -12,6 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import { useDeskStatus } from "@/hooks/useDeskStatus";
 import ConnectButton from "@/wallet/ConnectButton";
+import BrandLogo from "@/components/BrandLogo";
 
 const NAV = [
   { href: "/app/desk", label: "Desk", icon: ChartLine },
@@ -39,9 +40,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 items-center gap-3">
             <Link href="/" className="flex shrink-0 items-center gap-2.5">
-              <span className="flex h-7 w-7 items-center justify-center rounded-desk-sm border border-desk-accent/30 bg-desk-accent/10 font-mono text-[11px] font-semibold text-desk-accent">
-                ed
-              </span>
+              <BrandLogo size={28} />
               <span className="hidden text-sm font-semibold tracking-tight sm:inline">
                 Edge Desk
               </span>
