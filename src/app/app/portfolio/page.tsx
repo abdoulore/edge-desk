@@ -27,8 +27,14 @@ import {
   readWalletExecution,
   type WalletExecution,
 } from "@/lib/walletExecution";
-import { explorerTxUrl, type ClaimablePosition, type WalletOpenPosition } from "@/lib/types";
+import {
+  explorerTxUrl,
+  type ClaimablePosition,
+  type WalletOpenPosition,
+  type WalletSettledResult,
+} from "@/lib/types";
 import { formatFillStatusLabel, formatMarketStatus } from "@/lib/uiCopy";
+import { isSettledHolding, settledBadgeTone } from "@/lib/settledResults";
 
 export default function PortfolioPage() {
   // All hooks must run unconditionally on every render (React #310).
@@ -44,6 +50,9 @@ export default function PortfolioPage() {
   } | null>(null);
   const [openPositions, setOpenPositions] = useState<WalletOpenPosition[]>([]);
   const [claimable, setClaimable] = useState<ClaimablePosition[]>([]);
+  const [settledResults, setSettledResults] = useState<WalletSettledResult[]>(
+    [],
+  );
   const [portfolioLoading, setPortfolioLoading] = useState(false);
   const [portfolioError, setPortfolioError] = useState<string | null>(null);
   const [storedExec, setStoredExec] = useState<WalletExecution | null>(null);
@@ -77,6 +86,7 @@ export default function PortfolioPage() {
       if (!isConnected || !address) {
         setOpenPositions([]);
         setClaimable([]);
+        setSettledResults([]);
         setPortfolioError(null);
         return;
       }
@@ -87,10 +97,12 @@ export default function PortfolioPage() {
       if (!view) {
         setOpenPositions([]);
         setClaimable([]);
+        setSettledResults([]);
         setPortfolioError("We couldn't load your positions. Try again.");
       } else {
         setOpenPositions(view.openPositions);
         setClaimable(view.claimable);
+        setSettledResults(view.settledResults || []);
       }
       setPortfolioLoading(false);
     }
@@ -135,17 +147,21 @@ export default function PortfolioPage() {
       if (view) {
         setOpenPositions(view.openPositions);
         setClaimable(view.claimable);
+        setSettledResults(view.settledResults || []);
       }
     }
   }
 
-  const openNonClaim = openPositions.filter((p) => !p.claimable);
+  // Open = still-trading holdings only; settled W/L move to Settled results.
+  const openNonClaim = openPositions.filter(
+    (p) => !p.claimable && !isSettledHolding({ status: p.status, voided: p.voided }),
+  );
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
       <PageHeader kicker="Portfolio" title="Your positions" />
 
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <MiniStat label="Current market" value={signal?.asset || "-"} />
         <MiniStat
           label="Ready to claim"
@@ -155,6 +171,10 @@ export default function PortfolioPage() {
         <MiniStat
           label="Open positions"
           value={isConnected ? String(openNonClaim.length) : "-"}
+        />
+        <MiniStat
+          label="Settled results"
+          value={isConnected ? String(settledResults.length) : "-"}
         />
       </div>
 
@@ -326,6 +346,102 @@ export default function PortfolioPage() {
               </li>
             ))}
           </ul>
+        )}
+      </Panel>
+
+      <Panel title="Settled results">
+        {!isConnected ? (
+          <p className="text-sm text-desk-muted">
+            Connect your wallet to see past settled outcomes for this address.
+          </p>
+        ) : portfolioLoading && settledResults.length === 0 ? (
+          <StateBlock kind="loading" title="Loading settled results..." />
+        ) : settledResults.length === 0 ? (
+          <StateBlock
+            kind="empty"
+            title="No settled trades for this wallet yet."
+            detail="Wins, losses, claims, and voids for your connected wallet appear here after markets resolve. This is realized settlement only — not a Fair Up win-rate claim."
+          />
+        ) : (
+          <>
+            <p className="mb-3 text-xs text-desk-muted">
+              Realized settlement for your connected wallet only. Approximate PnL
+              uses indexed cost when available; otherwise PnL shows as —.
+            </p>
+            <ul className="space-y-2">
+              {settledResults.map((r) => (
+                <li
+                  key={r.id}
+                  className="rounded-desk border border-desk-border/70 bg-black/20 px-3 py-3 text-sm"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium">
+                      {r.asset}{" "}
+                      {r.intervalSec ? fmtInterval(r.intervalSec) : ""}
+                      {r.side ? (
+                        <>
+                          {" "}
+                          ·{" "}
+                          <span
+                            className={
+                              r.side === "Up"
+                                ? "text-desk-accent"
+                                : "text-desk-down"
+                            }
+                          >
+                            {r.side}
+                          </span>
+                        </>
+                      ) : null}
+                    </p>
+                    <Badge tone={settledBadgeTone(r.kind)}>{r.kind}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-desk-muted">
+                    Size {r.size}
+                    {r.payoutApprox ? ` · Payout ${r.payoutApprox}` : ""}
+                    {" · PnL "}
+                    <span
+                      className={
+                        r.pnlAvailable && (r.pnlApprox ?? 0) > 0
+                          ? "text-desk-accent"
+                          : r.pnlAvailable && (r.pnlApprox ?? 0) < 0
+                            ? "text-desk-down"
+                            : ""
+                      }
+                    >
+                      {r.pnlAvailable ? r.pnlLabel : "—"}
+                    </span>
+                    {!r.pnlAvailable ? (
+                      <span className="text-desk-muted/80">
+                        {" "}
+                        (est. unavailable)
+                      </span>
+                    ) : null}
+                  </p>
+                  {r.settledAt && (
+                    <p className="mt-0.5 text-[11px] text-desk-muted/80">
+                      {fmtDateTime(r.settledAt)}
+                    </p>
+                  )}
+                  {r.txHash && (
+                    <a
+                      href={explorerTxUrl(r.txHash)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-flex items-center gap-1 text-xs text-desk-accent hover:underline"
+                    >
+                      View claim tx{" "}
+                      <span className="font-mono">{shortHash(r.txHash)}</span>
+                      <ArrowSquareOut size={11} />
+                    </a>
+                  )}
+                  <p className="mt-0.5 font-mono text-[11px] text-desk-muted/80 tabular">
+                    Market {r.marketId.slice(0, 12)}…
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </Panel>
 

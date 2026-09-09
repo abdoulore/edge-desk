@@ -185,3 +185,35 @@ export const SHANNON_EXPLORER_TX =
 export function explorerTxUrl(hash: string): string {
   return `${SHANNON_EXPLORER_TX}/${hash}`;
 }
+
+/** Realized wallet settlement outcome — not a Fair Up / win-rate claim. */
+export type SettledOutcomeKind = "Won" | "Lost" | "Claimed" | "Void";
+
+/**
+ * One settled result for the connected wallet (held through resolution
+ * and/or redeemed). Scoped to the connected address only.
+ */
+export interface WalletSettledResult {
+  id: string;
+  marketId: string;
+  asset: string;
+  intervalSec: number;
+  kind: SettledOutcomeKind;
+  side?: Side;
+  /** Human-formatted outcome size (tokens held or redeemed). */
+  size: string;
+  sizeRaw?: string;
+  quoteDecimals: number;
+  /** Approx PnL in tUSDC when cost basis is known; null otherwise. */
+  pnlApprox: number | null;
+  /** Display label: signed tUSDC or "—". */
+  pnlLabel: string;
+  /** False when cost/payout basis is incomplete — do not invent numbers. */
+  pnlAvailable: boolean;
+  costApprox?: string | null;
+  payoutApprox?: string | null;
+  txHash?: string;
+  settledAt?: string;
+  winningOutcome?: number | null;
+  voided: boolean;
+}

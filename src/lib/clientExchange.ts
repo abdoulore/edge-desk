@@ -16,7 +16,10 @@ import type {
   FillStatus,
   Side,
   WalletOpenPosition,
+  WalletSettledResult,
 } from "./types";
+import { deriveSettledResults, isSettledHolding } from "./settledResults";
+import { readWalletExecution } from "./walletExecution";
 
 const INDEXER =
   process.env.NEXT_PUBLIC_INDEXER_URL || "https://dev.smk.somnia.host/v1/graphql";
@@ -319,12 +322,14 @@ export type WalletPortfolioView = {
   account: string;
   openPositions: WalletOpenPosition[];
   claimable: ClaimablePosition[];
+  settledResults: WalletSettledResult[];
   tradesTruncated: boolean;
 };
 
 /**
  * Connected-wallet portfolio via SDK getPortfolio (paginate trades if needed).
  * Claimable only when payout is eligible (winning side or voided).
+ * Settled results = realized W/L/Claimed/Void for this wallet only.
  */
 export async function fetchWalletPortfolio(
   account: string,
@@ -332,15 +337,29 @@ export async function fetchWalletPortfolio(
 ): Promise<WalletPortfolioView | null> {
   try {
     const exchange = createReadExchange();
-    const portfolio = await exchange.client.getPortfolio(account, {
-      ordersLimit: 100,
-      tradesLimit: opts?.tradesLimit ?? 50,
-    });
+    const tradesLimit = opts?.tradesLimit ?? 100;
+    const [portfolio, redeems, pnlRows] = await Promise.all([
+      exchange.client.getPortfolio(account, {
+        ordersLimit: 100,
+        tradesLimit,
+      }),
+      exchange.client
+        .getRouterActions(account, { kind: "Redeem", limit: 50 })
+        .catch(() => [] as Awaited<
+          ReturnType<typeof exchange.client.getRouterActions>
+        >),
+      exchange.client
+        .getOpenPositionsWithPnL(account)
+        .catch(() => [] as Awaited<
+          ReturnType<typeof exchange.client.getOpenPositionsWithPnL>
+        >),
+    ]);
 
     const byMarket = new Map<
       string,
       {
         marketId: string;
+        marketAddress: string;
         asset: string;
         intervalSec: number;
         status: string;
@@ -353,6 +372,8 @@ export async function fetchWalletPortfolio(
     >();
 
     const openPositions: WalletOpenPosition[] = [];
+    const settledPosInputs: Parameters<typeof deriveSettledResults>[0]["positions"] =
+      [];
 
     for (const pos of portfolio.positions) {
       const m = pos.market;
@@ -375,6 +396,7 @@ export async function fetchWalletPortfolio(
         outcomeIndex: pos.outcomeIndex,
         balanceRaw,
       });
+      const marketAddress = String(m.marketAddress || "").toLowerCase();
 
       openPositions.push({
         marketId,
@@ -391,10 +413,27 @@ export async function fetchWalletPortfolio(
         claimable,
       });
 
+      settledPosInputs.push({
+        marketId,
+        marketAddress,
+        asset: String(m.asset || "").toUpperCase(),
+        intervalSec,
+        status,
+        voided,
+        winningOutcome,
+        outcomeIndex: pos.outcomeIndex,
+        side,
+        balance: formatRawBalance(balanceRaw, decimals),
+        balanceRaw,
+        quoteDecimals: decimals,
+        claimable,
+      });
+
       let row = byMarket.get(marketId);
       if (!row) {
         row = {
           marketId,
+          marketAddress,
           asset: String(m.asset || "").toUpperCase(),
           intervalSec,
           status,
@@ -412,12 +451,7 @@ export async function fetchWalletPortfolio(
 
     const claimable: ClaimablePosition[] = [];
     for (const row of byMarket.values()) {
-      const settled =
-        row.voided ||
-        row.status === "Voided" ||
-        row.status === "Resolved" ||
-        row.status === "Finalized";
-      if (!settled) continue;
+      if (!isSettledHolding({ status: row.status, voided: row.voided })) continue;
 
       const upEligible = isPayoutEligible({
         status: row.status,
@@ -450,11 +484,126 @@ export async function fetchWalletPortfolio(
       });
     }
 
-    // Keep non-settled (and losing settled) holdings visible regardless of focus.
+    const marketMeta: Record<
+      string,
+      {
+        asset?: string;
+        intervalSec?: number;
+        marketAddress?: string;
+        quoteDecimals?: number;
+      }
+    > = {};
+    for (const row of byMarket.values()) {
+      marketMeta[row.marketId] = {
+        asset: row.asset,
+        intervalSec: row.intervalSec,
+        marketAddress: row.marketAddress,
+        quoteDecimals: row.quoteDecimals,
+      };
+    }
+
+    // Enrich claim-only markets (fully redeemed → no remaining position).
+    const missingRedeemIds = [
+      ...new Set(
+        redeems
+          .map((r) => (r.market ? String(r.market).toLowerCase() : ""))
+          .filter((id) => id && !marketMeta[id]),
+      ),
+    ].slice(0, 15);
+
+    await Promise.all(
+      missingRedeemIds.map(async (id) => {
+        try {
+          const m = await exchange.client.getMarket(id);
+          if (!m) return;
+          const anyM = m as unknown as {
+            asset?: string;
+            intervalSec?: number | string | null;
+            marketAddress?: string;
+            address?: string;
+            quoteDecimals?: number;
+            info?: { marketAddress?: string };
+          };
+          marketMeta[id] = {
+            asset: String(anyM.asset || "").toUpperCase() || "—",
+            intervalSec: Number(anyM.intervalSec ?? 0) || 0,
+            marketAddress: String(
+              anyM.marketAddress ||
+                anyM.address ||
+                anyM.info?.marketAddress ||
+                "",
+            ).toLowerCase(),
+            quoteDecimals: Number(anyM.quoteDecimals ?? 6),
+          };
+        } catch {
+          /* indexer gap — leave asset as — */
+        }
+      }),
+    );
+
+    const pnlHints = (pnlRows || []).map((row) => {
+      const mid = String(row.market?.id || "").toLowerCase();
+      return {
+        marketId: mid,
+        costBasisRaw: row.costBasis != null ? row.costBasis.toString() : null,
+        markValueRaw: row.markValue != null ? row.markValue.toString() : null,
+        unrealizedPnlRaw:
+          row.unrealizedPnl != null ? row.unrealizedPnl.toString() : null,
+        quoteDecimals: Number(row.market?.quoteDecimals ?? 6),
+      };
+    });
+
+    const tradeCosts = (portfolio.trades || []).map((t) => ({
+      marketAddress: String(t.market?.marketAddress || "").toLowerCase(),
+      side: t.side != null ? String(t.side) : null,
+      fillPriceRaw: String(t.fillPrice || "0"),
+      quantityRaw: String(t.quantity || "0"),
+      quoteDecimals: Number(t.market?.quoteDecimals ?? 6),
+    }));
+
+    const localHints: { marketId: string; costHuman: number }[] = [];
+    try {
+      const exec = readWalletExecution();
+      if (
+        exec?.marketId &&
+        Number.isFinite(exec.filledQty) &&
+        Number.isFinite(exec.price) &&
+        exec.filledQty > 0 &&
+        exec.price >= 0 &&
+        (exec.fillStatus === "full" ||
+          exec.fillStatus === "partial" ||
+          exec.fillStatus === "submitted")
+      ) {
+        localHints.push({
+          marketId: exec.marketId.toLowerCase(),
+          costHuman: exec.filledQty * exec.price,
+        });
+      }
+    } catch {
+      /* sessionStorage unavailable on server */
+    }
+
+    const settledResults = deriveSettledResults({
+      positions: settledPosInputs,
+      redeems: (redeems || []).map((r) => ({
+        id: String(r.id),
+        marketId: r.market ? String(r.market).toLowerCase() : null,
+        amount: String(r.amount || "0"),
+        payout: r.payout != null ? String(r.payout) : null,
+        timestamp: String(r.timestamp || "0"),
+        txHash: String(r.txHash || ""),
+      })),
+      trades: tradeCosts,
+      pnlHints,
+      localHints,
+      marketMeta,
+    });
+
     return {
       account: portfolio.account,
       openPositions,
       claimable,
+      settledResults,
       tradesTruncated: Boolean(portfolio.tradesTruncated),
     };
   } catch {

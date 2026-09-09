@@ -47,6 +47,9 @@ export const UI_COPY = {
   manualUnavailable: "Manual controls are unavailable on this deployment.",
   switchNetwork: "Switch your wallet to Somnia Shannon to continue.",
   connectWallet: "Connect your wallet",
+  settledResultsEmpty: "No settled trades for this wallet yet.",
+  settledResultsNote:
+    "Realized settlement for your connected wallet only — not a Fair Up win-rate claim.",
 } as const;
 
 export function formatMarketStatus(status?: string | null): string {
