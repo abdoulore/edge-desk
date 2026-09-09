@@ -118,7 +118,7 @@ export function useWalletTrade() {
           at: new Date().toISOString(),
           side,
           marketId: signal.marketId,
-          symbol: built.params.symbol,
+          symbol: result.symbol || built.params.symbol,
           fillStatus,
           filledQty,
           requestedQty: built.params.size,

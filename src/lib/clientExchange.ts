@@ -10,6 +10,7 @@ import { somniaShannon } from "@somnia-chain/markets-sdk/chains";
 import type { WalletClient } from "viem";
 import { formatRawBalance } from "./format";
 import { classifyFill } from "./fillStatus";
+import { resolveMarketSymbol } from "./outcomes";
 import type {
   ClaimablePosition,
   FillStatus,
@@ -46,22 +47,19 @@ export function createReadExchange(): SomniaMarkets {
   });
 }
 
-function marketIdOf(entry: unknown): string {
-  if (!entry || typeof entry !== "object") return "";
-  const m = entry as Record<string, unknown>;
-  const info = m.info as Record<string, unknown> | undefined;
-  return String(info?.marketId || m.id || "").toLowerCase();
-}
-
 /**
  * loadMarkets() must run on this exchange instance before createOrder —
  * the SDK resolves symbols from an instance registry.
  * Validates chain binding, optional marketId, and outcome symbol together.
+ *
+ * loadMarkets() keys by MARKET symbol (BTC-…/tUSDC); wallet signals carry
+ * tradable …#YES/#NO. Resolve via base key / marketId / nested outcomes and
+ * return the registry tradable symbol for createOrder.
  */
 export async function ensureMarketReady(
   exchange: SomniaMarkets,
   opts: { symbol: string; marketId?: string },
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true; symbol: string } | { ok: false; message: string }> {
   const { symbol, marketId } = opts;
   if (!symbol) return { ok: false, message: "Missing outcome symbol" };
 
@@ -75,28 +73,8 @@ export async function ensureMarketReady(
     };
   }
 
-  const direct = map[symbol];
-  let entry = direct;
-  if (!entry) {
-    const lower = symbol.toLowerCase();
-    entry = Object.entries(map).find(([k]) => k.toLowerCase() === lower)?.[1];
-  }
-  if (!entry) {
-    return {
-      ok: false,
-      message: `Unknown symbol ${symbol} after loadMarkets — market mapping missing`,
-    };
-  }
-
-  if (marketId) {
-    const mid = marketIdOf(entry);
-    if (mid && mid !== marketId.toLowerCase()) {
-      return {
-        ok: false,
-        message: `Symbol ${symbol} maps to market ${mid}, not ${marketId}`,
-      };
-    }
-  }
+  const resolved = resolveMarketSymbol(map, { symbol, marketId });
+  if (!resolved.ok) return resolved;
 
   // Soft chain check — Shannon testnet wallet exchange is fixed at construction.
   try {
@@ -111,7 +89,7 @@ export async function ensureMarketReady(
     /* ignore */
   }
 
-  return { ok: true };
+  return { ok: true, symbol: resolved.symbol };
 }
 
 export type PlaceIocResult = {
@@ -120,6 +98,8 @@ export type PlaceIocResult = {
   requested: number;
   fillStatus: FillStatus;
   orderStatus?: string;
+  /** Registry tradable symbol used for createOrder (may differ from input). */
+  symbol: string;
 };
 
 export async function placeIocWithWallet(
@@ -132,7 +112,7 @@ export async function placeIocWithWallet(
   const ready = await ensureMarketReady(exchange, { symbol, marketId });
   if (!ready.ok) throw new Error(ready.message);
 
-  const order = await exchange.createOrder(symbol, "limit", "buy", size, limitPrice, {
+  const order = await exchange.createOrder(ready.symbol, "limit", "buy", size, limitPrice, {
     timeInForce: "IOC",
   });
   const info = order.info as PlaceOrderResult | undefined;
@@ -170,6 +150,7 @@ export async function placeIocWithWallet(
     requested: size,
     fillStatus,
     orderStatus: (order as { status?: string }).status,
+    symbol: ready.symbol,
   };
 }
 

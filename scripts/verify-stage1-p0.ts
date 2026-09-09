@@ -14,6 +14,12 @@ import {
   spotImpliedBias,
 } from "../src/lib/edge";
 import { buildCopyOrderParams } from "../src/lib/orderParams";
+import {
+  resolveMarketSymbol,
+  pickOutcomes,
+  normalizeMarketKeySegment,
+} from "../src/lib/outcomes";
+import { ensureMarketReady, createReadExchange } from "../src/lib/clientExchange";
 
 function assert(cond: unknown, msg: string) {
   if (!cond) throw new Error(`FAIL: ${msg}`);
@@ -113,11 +119,106 @@ function checkExecutableEdge() {
   assert(Math.abs(bias - 0.5) < 1e-9, "flat spot → bias 0.5");
 }
 
+
+function checkResolveMarketSymbolUnit() {
+  const marketId = "0x000000000000000000000000000000000000000000000000000000000001823e";
+  const base = "BTC-0-09SEP26-1445/tUSDC";
+  const yes = `${base}#YES`;
+  const no = `${base}#NO`;
+  const map: Record<string, unknown> = {
+    [base]: {
+      id: marketId,
+      symbol: base,
+      outcomes: [
+        { symbol: yes, label: "YES", index: 0 },
+        { symbol: no, label: "NO", index: 1 },
+      ],
+      info: { marketId, symbol: base },
+    },
+  };
+
+  // Direct map[tradable] fails — this is the wallet bug; resolver must still work.
+  assert(!(yes in map), "fixture: tradable is not a top-level loadMarkets key");
+
+  const byBase = resolveMarketSymbol(map, { symbol: yes });
+  assert(byBase.ok && byBase.symbol === yes, `resolve via base strip → ${yes}`);
+
+  const byId = resolveMarketSymbol(map, {
+    symbol: "BTC-0-09SEP26-1445/tUSDC#YES",
+    marketId,
+  });
+  assert(byId.ok && byId.symbol === yes, "resolve by marketId picks YES");
+
+  const byIdNo = resolveMarketSymbol(map, {
+    symbol: "DOES-NOT-EXIST#NO",
+    marketId,
+  });
+  assert(byIdNo.ok && byIdNo.symbol === no, "resolve by marketId alone picks NO");
+
+  const picked = pickOutcomes(map[base] as Record<string, unknown>);
+  assert(picked.upSymbol === yes && picked.downSymbol === no, "pickOutcomes YES/NO");
+
+  assert(
+    normalizeMarketKeySegment("BTC-O-09SEP26-1445/tUSDC#YES") ===
+      "BTC-0-09SEP26-1445/tUSDC#YES",
+    "normalize O→0 in strike segment",
+  );
+}
+
+async function checkEnsureMarketReadyLive() {
+  const exchange = createReadExchange();
+  const map = (await exchange.loadMarkets(true)) as Record<string, unknown>;
+  assert(Object.keys(map).length > 0, "live loadMarkets non-empty");
+
+  // Prefer a binary market with nested #YES outcome.
+  let baseKey = "";
+  let yesSym = "";
+  let marketId = "";
+  for (const [k, v] of Object.entries(map)) {
+    if (!v || typeof v !== "object") continue;
+    const entry = v as Record<string, unknown>;
+    const picked = pickOutcomes(entry);
+    if (!picked.upSymbol?.includes("#YES")) continue;
+    baseKey = k;
+    yesSym = picked.upSymbol;
+    const info = entry.info as Record<string, unknown> | undefined;
+    marketId = String(info?.marketId || entry.id || "");
+    break;
+  }
+  assert(!!yesSym && !!marketId, "found live binary YES tradable");
+  assert(!(yesSym in map), `live: ${yesSym} is NOT a top-level key (wallet bug repro)`);
+  assert(baseKey in map, `live: base ${baseKey} is the registry key`);
+
+  const ready = await ensureMarketReady(exchange, {
+    symbol: yesSym,
+    marketId,
+  });
+  assert(ready.ok, `ensureMarketReady(${yesSym}) ok`);
+  if (ready.ok) {
+    assert(
+      ready.symbol === yesSym,
+      `resolved registry symbol ${ready.symbol} === ${yesSym}`,
+    );
+  }
+
+  // marketId-only path with a deliberately wrong base prefix in the symbol
+  const bogus = `ZZZ-MISSING-PREFIX/tUSDC#YES`;
+  const byMid = resolveMarketSymbol(map, { symbol: bogus, marketId });
+  assert(
+    byMid.ok && byMid.symbol === yesSym,
+    `resolve-by-marketId recovers ${yesSym} from bogus symbol`,
+  );
+}
+
 async function main() {
   console.log("— executable edge / orderParams —");
   checkExecutableEdge();
+  console.log("— outcome resolve (unit) —");
+  checkResolveMarketSymbolUnit();
   console.log("— SDK loadMarkets registry —");
   await checkLoadMarkets();
+  console.log("— ensureMarketReady resolve-by-marketId —");
+  await checkEnsureMarketReadyLive();
   console.log("\nAll Stage 1 P0 checks passed.");
 }
 

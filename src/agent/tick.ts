@@ -31,6 +31,7 @@ import type {
   Side,
   SpotSource,
 } from "@/lib/types";
+import { pickOutcomes } from "@/lib/outcomes";
 
 function asNum(v: unknown): number | null {
   if (v == null) return null;
@@ -41,49 +42,6 @@ function asNum(v: unknown): number | null {
 
 /** Refuse trading when SDK spot observation is older than this (ms). */
 const MAX_SPOT_AGE_MS = 5 * 60 * 1000;
-
-type OutcomeLike = { symbol?: string; label?: string; index?: number };
-
-function pickOutcomes(m: Record<string, unknown>): {
-  upSymbol?: string;
-  downSymbol?: string;
-  marketSymbol?: string;
-} {
-  const info = m.info as
-    | { outcomes?: OutcomeLike[]; symbol?: string }
-    | undefined;
-  const outcomes =
-    (m.outcomes as OutcomeLike[] | undefined) || info?.outcomes || undefined;
-  const marketSymbol =
-    (typeof m.symbol === "string" && m.symbol) ||
-    (typeof info?.symbol === "string" && info.symbol) ||
-    undefined;
-
-  if (!outcomes?.length) return { marketSymbol };
-
-  const norm = (s?: string) => String(s || "").toUpperCase();
-  const byLabel = (...labels: string[]) => {
-    const wanted = labels.map((l) => l.toUpperCase());
-    return (
-      outcomes.find((o) => wanted.includes(norm(o.label)))?.symbol ||
-      outcomes.find((o) =>
-        wanted.some((l) => norm(o.symbol).endsWith(`#${l}`)),
-      )?.symbol
-    );
-  };
-
-  // Unified SDK: Up == YES (index 0), Down == NO (index 1)
-  const upSymbol =
-    byLabel("YES", "UP") ||
-    outcomes.find((o) => o.index === 0)?.symbol ||
-    outcomes[0]?.symbol;
-  const downSymbol =
-    byLabel("NO", "DOWN") ||
-    outcomes.find((o) => o.index === 1)?.symbol ||
-    outcomes[1]?.symbol;
-
-  return { upSymbol, downSymbol, marketSymbol };
-}
 
 type OutcomeEntry = {
   marketSymbol: string;
